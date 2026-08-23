@@ -119,26 +119,17 @@ const SECTION_END_MAP = {
   eot: 'tab', end_of_tab: 'tab',
 };
 const COMMENT_DIRECTIVE_NAMES = new Set(['c', 'comment']);
-const PAUSE_DIRECTIVE_NAMES = new Set(['pause', 'p']);
-const MIN_PAUSE_SECONDS = 0.5;
-const MAX_PAUSE_SECONDS = 300;
-// {sos: X}/{start_of_speed: X} ... {eos}/{end_of_speed}: expliziter
-// Geschwindigkeits-Block (z.B. Solo/Instrumental) mit Faktor X (0.5 = halbe
-// Geschwindigkeit). Zusätzlich werden reine Akkordzeilen (Solo-Passagen ohne
-// Text) automatisch mit AUTO_SOLO_SPEED_FACTOR gedrosselt, siehe
-// autoDetectSoloSpeedZones().
-const SPEED_START_DIRECTIVE_NAMES = new Set(['sos', 'start_of_speed']);
-const SPEED_END_DIRECTIVE_NAMES = new Set(['eos', 'end_of_speed']);
-const MIN_SPEED_FACTOR = 0.1;
-const MAX_SPEED_FACTOR = 4;
-const AUTO_SOLO_SPEED_FACTOR = 0.5;
+// {pause:}/{p:}/{delay:}/{sos:}/{eos}/{start_of_speed:}/{end_of_speed}
+// werden nicht mehr unterstützt (kein Start-Delay/Fast-Forward/Pausen/
+// Speed-Zonen mehr im Autoscroll) - bleiben aber body-only, damit sie bei
+// älteren Songtexten nicht als Metadaten interpretiert werden, sondern
+// einfach ignoriert (siehe renderChordProLines).
+const IGNORED_DIRECTIVE_NAMES = new Set(['pause', 'p', 'delay', 'sos', 'start_of_speed', 'eos', 'end_of_speed']);
 const BODY_ONLY_DIRECTIVE_NAMES = new Set([
   ...Object.keys(SECTION_START_MAP),
   ...Object.keys(SECTION_END_MAP),
   ...COMMENT_DIRECTIVE_NAMES,
-  ...PAUSE_DIRECTIVE_NAMES,
-  ...SPEED_START_DIRECTIVE_NAMES,
-  ...SPEED_END_DIRECTIVE_NAMES,
+  ...IGNORED_DIRECTIVE_NAMES,
   'shl',
   'ehl',
 ]);
@@ -411,110 +402,23 @@ function buildLyricSegments(lyric, highlightRanges) {
   return segments;
 }
 
-// Zeilen, die zwar Text enthalten, aber keine "echte" Gesangszeile sind -
-// zählen für das Show-Modus-Start-Delay als Notiz mit, beenden aber nicht
-// den Intro-/Lead-In-Zähler: $$-Anmerkungszeilen, '#'-/'//'-Kommentarzeilen
-// (nicht die {c:}/{comment:}-Direktive, die als eigener type 'comment'
-// geführt wird) sowie reine Taktzähler (z.B. "7" oder "1 2 3 4"). Exportiert,
-// damit ShowModeScreen.js (computeStartDelaySeconds) und
-// autoDetectSoloSpeedZones hier dieselbe Intro-Grenze verwenden.
-const NUMERIC_ONLY_LINE_REGEX = /^[0-9\s.-]+$/;
-
-export function isNonVocalLeadLine(trimmedLyric) {
-  if (trimmedLyric === '') return true;
-  if (trimmedLyric.startsWith('$$')) return true;
-  if (trimmedLyric.startsWith('#')) return true;
-  if (trimmedLyric.startsWith('//')) return true;
-  if (NUMERIC_ONLY_LINE_REGEX.test(trimmedLyric)) return true;
-  return false;
-}
-
-/**
- * Ermittelt den Index der ersten "echten" Gesangszeile (normale Zeile mit
- * tatsächlichem Liedtext, keine reine Akkordzeile und keine Notiz/Kommentar/
- * Taktzähler-Zeile) - alles davor gilt als Song-Intro. Liefert items.length,
- * wenn der ganze Song keine solche Zeile enthält.
- */
-function findIntroEndIndex(items) {
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i];
-    if (item.type !== 'line') continue;
-    if (Array.isArray(item.chords)) continue; // reine Akkordzeile - noch Intro
-    const trimmedLyric = (item.lyricLine || '').trim();
-    if (!isNonVocalLeadLine(trimmedLyric)) return i;
-  }
-  return items.length;
-}
-
-/**
- * Zweiter Durchlauf über die von renderChordProLines() gebauten Zeilen-/
- * Blockobjekte: erkennt Läufe aufeinanderfolgender reiner Akkordzeilen
- * (type 'line' mit `chords`-Array, also Solo-/Instrumental-Passagen ohne
- * Text) außerhalb bereits expliziter {sos:}/{eos}-Blöcke und umschließt sie
- * automatisch mit denselben speedZoneStart/speedZoneEnd-Markern (Faktor
- * AUTO_SOLO_SPEED_FACTOR), damit die Show-Modus-Engine sie identisch wie
- * einen expliziten Speed-Block behandelt. Das Song-Intro (vor der ersten
- * echten Gesangszeile, siehe findIntroEndIndex) wird dabei bewusst NICHT
- * automatisch gedrosselt - das Start-Delay im Show-Modus (computeStartDelay-
- * Seconds) rechnet die zusätzliche Vorlaufzeit für Intro-Akkorde bereits mit
- * ein, eine zusätzliche 0.5x-Drosselung beim Losscrollen wäre doppelt.
- */
-function autoDetectSoloSpeedZones(items) {
-  const explicitRanges = [];
-  let openIdx = null;
-  items.forEach((item, i) => {
-    if (item.type === 'speedZoneStart') {
-      openIdx = i;
-    } else if (item.type === 'speedZoneEnd' && openIdx !== null) {
-      explicitRanges.push([openIdx, i]);
-      openIdx = null;
-    }
-  });
-  const isInExplicitRange = (i) => explicitRanges.some(([s, e]) => i > s && i < e);
-  const introEndIndex = findIntroEndIndex(items);
-
-  const output = [];
-  let runOpen = false;
-  items.forEach((item, idx) => {
-    const isPureChordLine =
-      item.type === 'line' && Array.isArray(item.chords) && !isInExplicitRange(idx) && idx >= introEndIndex;
-    if (isPureChordLine && !runOpen) {
-      output.push({ type: 'speedZoneStart', factor: AUTO_SOLO_SPEED_FACTOR });
-      runOpen = true;
-    } else if (!isPureChordLine && runOpen) {
-      output.push({ type: 'speedZoneEnd' });
-      runOpen = false;
-    }
-    output.push(item);
-  });
-  if (runOpen) {
-    output.push({ type: 'speedZoneEnd' });
-  }
-  return output;
-}
-
 /**
  * Wandelt den ChordPro-Songtext (ohne Meta-Direktiven) in eine Liste von
  * Zeilen-/Blockobjekten für die klassische Songbook-Darstellung um:
  * - {type: 'comment', text} für {c: ...}/{comment: ...}
- * - {type: 'pause', seconds} für {pause: 10}/{p: 10} (Auto-Scroll-Stopp im
- *   Show-Modus, siehe ShowModeScreen) - Sekunden auf 0.5-300 begrenzt,
- *   ungültige/fehlende Werte werden ignoriert (keine Pause erzeugt).
- * - {type: 'speedZoneStart', factor} / {type: 'speedZoneEnd'} für
- *   {sos: X}/{start_of_speed: X} ... {eos}/{end_of_speed} (expliziter
- *   Geschwindigkeits-Block) sowie automatisch für reine Akkordzeilen-Blöcke
- *   (Solo-Erkennung, siehe autoDetectSoloSpeedZones) - Faktor auf
- *   0.1-4 begrenzt. Zero-Height-Marker, kein sichtbarer Text.
  * - {type: 'line', section, chordLine, lyricLine, lyricSegments, chords?}
  *   für alles andere, `section` ist 'verse'|'chorus'|'tab'|null je nach
  *   umschließendem {sov}/{soc}/{sot}...{eov}/{eoc}/{eot}-Block.
+ * {pause:}/{p:}/{delay:}/{sos:}/{eos}/{start_of_speed:}/{end_of_speed}
+ * werden erkannt, aber ignoriert (kein Start-Delay/Fast-Forward/Pausen/
+ * Speed-Zonen mehr - das Autoscroll läuft mit einer einzigen, konstanten
+ * Geschwindigkeit durch, siehe ShowModeScreen).
  */
 export function renderChordProLines(rawText, semitones, preferFlat = false) {
   const { lines } = parseChordPro(rawText);
   const result = [];
   let currentSection = null;
   const highlightState = { color: null };
-  let speedZoneOpen = false;
 
   for (const rawLine of lines) {
     const directive = parseAnyDirective(rawLine.trim());
@@ -532,29 +436,7 @@ export function renderChordProLines(rawText, semitones, preferFlat = false) {
         result.push({ type: 'comment', text: directive.value });
         continue;
       }
-      if (PAUSE_DIRECTIVE_NAMES.has(lowerName)) {
-        const raw = Number(directive.value);
-        if (!isNaN(raw) && raw > 0) {
-          const seconds = Math.max(MIN_PAUSE_SECONDS, Math.min(MAX_PAUSE_SECONDS, raw));
-          result.push({ type: 'pause', seconds });
-        }
-        continue;
-      }
-      if (SPEED_START_DIRECTIVE_NAMES.has(lowerName)) {
-        const raw = Number(directive.value);
-        if (!isNaN(raw) && raw > 0) {
-          if (speedZoneOpen) result.push({ type: 'speedZoneEnd' }); // vorherigen Block sauber schließen
-          const factor = Math.max(MIN_SPEED_FACTOR, Math.min(MAX_SPEED_FACTOR, raw));
-          result.push({ type: 'speedZoneStart', factor });
-          speedZoneOpen = true;
-        }
-        continue;
-      }
-      if (SPEED_END_DIRECTIVE_NAMES.has(lowerName)) {
-        if (speedZoneOpen) {
-          result.push({ type: 'speedZoneEnd' });
-          speedZoneOpen = false;
-        }
+      if (IGNORED_DIRECTIVE_NAMES.has(lowerName)) {
         continue;
       }
     }
@@ -562,11 +444,8 @@ export function renderChordProLines(rawText, semitones, preferFlat = false) {
     const parsedLine = splitChordLine(rawLine, semitones, preferFlat, highlightState);
     result.push({ type: 'line', section: currentSection, ...parsedLine });
   }
-  if (speedZoneOpen) {
-    result.push({ type: 'speedZoneEnd' });
-  }
 
-  return autoDetectSoloSpeedZones(result);
+  return result;
 }
 
 /**

@@ -112,7 +112,6 @@
     .verse-block { border-left: 2px solid #4b5563; padding-left: 8px; margin: 8px 0; }
     .tab-block { background: #000; border: 1px solid #262626; color: #4ade80; padding: 6px 10px; border-radius: 4px; font-family: "Courier New", Courier, monospace; margin: 6px 0; white-space: pre; }
     .highlight-span { border-radius: 3px; padding: 1px 4px; }
-    .pause-badge { display: inline-flex; align-items: center; gap: 6px; background: rgba(59,130,246,0.15); border: 1px dashed #3b82f6; color: #93c5fd; font-size: 12px; font-weight: bold; padding: 3px 10px; border-radius: 999px; margin: 6px 0; opacity: 0.9; }
     .notes-divider { border: none; border-top: 1px dashed #3f3f3f; margin: 8px 0; }
     .note-line { color: #fbbf24; font-style: italic; opacity: 0.85; margin: 2px 0; }
     .meta-tag-line { display: inline-block; color: #a78bfa; font-size: 11.5px; font-family: "Courier New", Courier, monospace; background: rgba(167,139,250,0.12); border: 1px solid rgba(167,139,250,0.3); border-radius: 4px; padding: 2px 6px; margin: 3px 0; }
@@ -523,10 +522,10 @@ $$$$$$$$$$$$$$$$$$$
           return;
         }
 
-        // 2b. Pausen-Badges {pause: X} / {p: X} (X = Sekunden)
-        const pauseMatch = trimmed.match(/^\{(pause|p):\s*([0-9.]+)\s*\}$/i);
-        if (pauseMatch) {
-          html += `<div class="pause-badge">⏸ Pause: ${escapeHtml(pauseMatch[2])}s</div>`;
+        // 2b. Pausen-/Delay-/Speed-Direktiven werden ignoriert (nicht mehr
+        // gerendert, kein Badge) - {pause:}/{p:}/{delay:}/{sos:}/{eos}/
+        // {start_of_speed:}/{end_of_speed}.
+        if (/^\{(pause|p|delay|sos|start_of_speed|eos|end_of_speed)(:[^}]*)?\}$/i.test(trimmed)) {
           return;
         }
 

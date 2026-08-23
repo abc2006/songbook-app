@@ -85,33 +85,8 @@ function LyricLine({ line, textStyle }) {
  * siehe chordSettingsService.js. `fontSize` ist der bestehende Song-Zoom
  * (A+/A-), wirkt als Skalierungsfaktor auf die konfigurierten Basisgrößen.
  * Gemeinsam genutzt von SongDetailView (Normalmodus) und ShowModeScreen.
- * `onPauseLayout(index, y, seconds)` (optional) wird für {pause:}/{p:}-
- * Marker mit deren vertikaler Position innerhalb der ScrollView aufgerufen
- * (nur relevant für den Show-Modus, der daraus die Auto-Scroll-Stopps
- * berechnet - im Normalmodus einfach weglassen).
- * `onSpeedZoneLayout(index, y, type, factor)` (optional) analog für
- * speedZoneStart/speedZoneEnd-Marker ({sos:}/{eos} oder automatisch
- * erkannte Akkord-Solo-Blöcke) - werden als unsichtbare Zero-Height-Marker
- * gerendert (kein Text im Songtext).
- * `lastLineIndex`/`onLastLineLayout(y, height)` (optional) melden Position
- * UND gerenderte Höhe der letzten "echten" Text-/Akkordzeile (nicht die
- * eines Kommentars/Markers) - für den intelligenten Auto-Scroll-Stopp am
- * Songende im Show-Modus (siehe ShowModeScreen).
- * `firstMusicLineIndex`/`onFirstMusicLineLayout(y, height)` (optional) analog
- * für die erste "echte" musikalische Zeile (reine Akkordzeile oder
- * Gesangstext, unter Umgehung von $$-Notizen/#-Kommentaren) - für die
- * Fast-Forward-zur-Lesemarke-Logik am Songanfang im Show-Modus.
  */
-export function ChordProLines({
-  lines,
-  fontSize,
-  onPauseLayout,
-  onSpeedZoneLayout,
-  lastLineIndex,
-  onLastLineLayout,
-  firstMusicLineIndex,
-  onFirstMusicLineLayout,
-}) {
+export function ChordProLines({ lines, fontSize }) {
   const { typography } = getChordSettings();
   const scale = (fontSize || DEFAULT_BASE_FONT_SIZE) / DEFAULT_BASE_FONT_SIZE;
   const chordStyle = chordTextStyle(typography, scale);
@@ -119,30 +94,6 @@ export function ChordProLines({
   return (
     <>
       {lines.map((line, idx) => {
-        if (line.type === 'speedZoneStart' || line.type === 'speedZoneEnd') {
-          return (
-            <View
-              key={idx}
-              style={styles.speedZoneMarker}
-              onLayout={(e) =>
-                onSpeedZoneLayout && onSpeedZoneLayout(idx, e.nativeEvent.layout.y, line.type, line.factor)
-              }
-            />
-          );
-        }
-
-        if (line.type === 'pause') {
-          return (
-            <View
-              key={idx}
-              style={styles.pauseMarker}
-              onLayout={(e) => onPauseLayout && onPauseLayout(idx, e.nativeEvent.layout.y, line.seconds)}
-            >
-              <Text style={styles.pauseMarkerText}>⏸ {line.seconds}s</Text>
-            </View>
-          );
-        }
-
         if (line.type === 'comment') {
           const style = commentStyle(typography, scale);
           if (typography.comments.style === 'badge') {
@@ -161,17 +112,6 @@ export function ChordProLines({
 
         const textStyle = sectionTextStyle(line.section, typography, scale);
         const isBorderedChorus = line.section === 'chorus' && typography.chorus.style === 'border';
-        const layoutCallbacks = [];
-        if (idx === lastLineIndex && onLastLineLayout) {
-          layoutCallbacks.push((e) => onLastLineLayout(e.nativeEvent.layout.y, e.nativeEvent.layout.height));
-        }
-        if (idx === firstMusicLineIndex && onFirstMusicLineLayout) {
-          layoutCallbacks.push((e) => onFirstMusicLineLayout(e.nativeEvent.layout.y, e.nativeEvent.layout.height));
-        }
-        const lastLineLayoutProps = layoutCallbacks.length
-          ? { onLayout: (e) => layoutCallbacks.forEach((cb) => cb(e)) }
-          : null;
-
         if (line.chords) {
           const colWidth = Math.round(chordStyle.fontSize * 4.5);
           const content = (
@@ -184,11 +124,11 @@ export function ChordProLines({
             </View>
           );
           return isBorderedChorus ? (
-            <View key={idx} style={styles.chorusBorder} {...lastLineLayoutProps}>
+            <View key={idx} style={styles.chorusBorder}>
               {content}
             </View>
           ) : (
-            <View key={idx} {...lastLineLayoutProps}>{content}</View>
+            <View key={idx}>{content}</View>
           );
         }
 
@@ -200,11 +140,11 @@ export function ChordProLines({
         );
 
         return isBorderedChorus ? (
-          <View key={idx} style={styles.chorusBorder} {...lastLineLayoutProps}>
+          <View key={idx} style={styles.chorusBorder}>
             {content}
           </View>
         ) : (
-          <View key={idx} {...lastLineLayoutProps}>{content}</View>
+          <View key={idx}>{content}</View>
         );
       })}
     </>
@@ -221,16 +161,4 @@ const styles = {
     paddingHorizontal: 8,
     paddingVertical: 3,
   },
-  pauseMarker: {
-    alignSelf: 'center',
-    marginVertical: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: 'rgba(136,136,136,0.35)',
-    opacity: 0.5,
-  },
-  pauseMarkerText: { fontSize: 12, color: '#888' },
-  speedZoneMarker: { height: 0 },
 };
