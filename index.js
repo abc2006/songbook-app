@@ -1,3 +1,7 @@
+// Muss vor allem anderen importiert werden - Supabase (URL-Parsing) braucht
+// das auf Hermes/React Native, sonst schlägt createClient() fehl.
+import 'react-native-url-polyfill/auto';
+
 import { registerRootComponent } from 'expo';
 
 import App from './App';

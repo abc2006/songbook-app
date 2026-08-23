@@ -1,0 +1,861 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>SWE v14</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #121212; color: #e0e0e0; display: flex; height: 100vh; overflow: hidden; }
+    
+    #sidebar { width: 340px; background: #1a1a1a; border-right: 1px solid #2d2d2d; display: flex; flex-direction: column; }
+    #tab-bar { display: flex; border-bottom: 1px solid #2d2d2d; }
+    .tab-btn { flex: 1; padding: 12px; background: #141414; border: none; color: #888; cursor: pointer; font-weight: bold; font-size: 13px; }
+    .tab-btn.active { background: #1a1a1a; color: #3b82f6; border-bottom: 2px solid #3b82f6; }
+    
+    #sidebar-header { padding: 12px; border-bottom: 1px solid #2d2d2d; display: flex; flex-direction: column; gap: 8px; }
+    #search { width: 100%; padding: 8px 10px; background: #252525; border: 1px solid #3d3d3d; color: #fff; border-radius: 6px; font-size: 13px; }
+    #search:focus { outline: none; border-color: #3b82f6; }
+    
+    .btn-row { display: flex; gap: 6px; }
+    button { padding: 7px 12px; border: none; border-radius: 5px; cursor: pointer; font-weight: 600; font-size: 12px; transition: opacity 0.2s; }
+    button:hover { opacity: 0.9; }
+    .btn-primary { background: #2563eb; color: #fff; flex: 1; }
+    .btn-secondary { background: #2d2d2d; color: #ccc; border: 1px solid #404040; }
+    .btn-danger { background: #dc2626; color: #fff; }
+    .btn-icon { padding: 4px 8px; font-size: 12px; background: #2a2a2a; color: #aaa; border-radius: 4px; }
+    
+    .list-container { flex: 1; overflow-y: auto; list-style: none; }
+    .item { padding: 12px 14px; border-bottom: 1px solid #222; cursor: pointer; transition: background 0.15s; }
+    .item:hover { background: #242424; }
+    .item.active { background: #1e293b; border-left: 3px solid #3b82f6; }
+    .item-title { font-weight: bold; color: #fff; font-size: 13.5px; }
+    .item-sub { font-size: 11.5px; color: #888; margin-top: 2px; }
+    .badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; font-size: 11px; border-radius: 3px; background: #2d2d2d; color: #aaa; margin-right: 4px; margin-top: 4px; }
+
+    #main { flex: 1; display: flex; flex-direction: column; }
+    #toolbar { padding: 10px 20px; background: #1a1a1a; border-bottom: 1px solid #2d2d2d; display: flex; justify-content: space-between; align-items: center; }
+    #connection-status { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #888; margin-top: 2px; }
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #dc2626; }
+    .status-dot.online { background: #16a34a; }
+
+    #content-view { flex: 1; display: flex; overflow: hidden; }
+    #editor-pane { flex: 1; padding: 16px; border-right: 1px solid #2d2d2d; display: flex; flex-direction: column; }
+    
+    #preview-container { flex: 1; position: relative; display: flex; flex-direction: column; overflow: hidden; background: #0d0d0d; }
+    
+    /* Native Tab-Stopps mit tab-size: 6 */
+    #preview-pane { 
+      flex: 1; 
+      padding: 28px 24px; 
+      overflow-y: auto; 
+      font-family: "Courier New", Courier, monospace; 
+      font-size: 14px; 
+      line-height: 1.4; 
+      white-space: pre-wrap; 
+      tab-size: 6; 
+      -moz-tab-size: 6;
+    }
+    
+    #preview-meta-container {
+      position: absolute;
+      top: 16px;
+      right: 24px;
+      display: flex;
+      gap: 8px;
+      z-index: 100;
+      pointer-events: none;
+    }
+
+    .meta-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-family: monospace;
+      font-size: 13px;
+      font-weight: bold;
+      color: #60a5fa;
+      background: rgba(30, 41, 59, 0.88);
+      backdrop-filter: blur(6px);
+      border: 1px solid #3b82f6;
+      padding: 6px 12px;
+      border-radius: 6px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.6);
+    }
+
+    textarea { 
+      flex: 1; 
+      width: 100%; 
+      background: #141414; 
+      color: #f0f0f0; 
+      border: 1px solid #2d2d2d; 
+      padding: 14px; 
+      font-family: "Courier New", Courier, monospace; 
+      font-size: 13.5px; 
+      line-height: 1.5; 
+      resize: none; 
+      border-radius: 6px; 
+      tab-size: 6; 
+      -moz-tab-size: 6;
+    }
+    textarea:focus { outline: none; border-color: #3b82f6; }
+    
+    .chord-line { color: #60a5fa; font-weight: bold; min-height: 1.2em; }
+    .lyric-line { color: #f3f4f6; margin-bottom: 6px; }
+
+    /* Erweiterte ChordPro-Styles für Vorschau */
+    .comment-line { color: #c084fc; font-style: italic; margin: 4px 0 6px 0; }
+    .chorus-block { border-left: 3px solid #3b82f6; padding-left: 10px; margin: 8px 0; }
+    .verse-block { border-left: 2px solid #4b5563; padding-left: 8px; margin: 8px 0; }
+    .tab-block { background: #000; border: 1px solid #262626; color: #4ade80; padding: 6px 10px; border-radius: 4px; font-family: "Courier New", Courier, monospace; margin: 6px 0; white-space: pre; }
+    .highlight-span { border-radius: 3px; padding: 1px 4px; }
+
+    #setlist-view { flex: 1; display: none; padding: 24px; overflow-y: auto; flex-direction: column; gap: 20px; max-width: 850px; margin: 0 auto; width: 100%; }
+    .setlist-card { background: #1a1a1a; border: 1px solid #2d2d2d; border-radius: 8px; padding: 16px; }
+    .setlist-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    .setlist-table th, .setlist-table td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #252525; font-size: 13px; }
+    .setlist-table th { color: #888; font-weight: normal; }
+
+    #settings-modal, #add-song-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; justify-content: center; align-items: center; z-index: 100; backdrop-filter: blur(4px); }
+    .modal-box { background: #1e1e1e; border: 1px solid #333; padding: 20px; border-radius: 8px; width: 440px; max-width: 90%; display: flex; flex-direction: column; gap: 14px; }
+    .input-group { display: flex; flex-direction: column; gap: 5px; }
+    .input-group label { font-size: 11.5px; color: #aaa; }
+    .input-group input { padding: 9px; background: #141414; border: 1px solid #333; border-radius: 5px; color: #fff; font-size: 13px; }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+
+  <div id="sidebar">
+    <div id="tab-bar">
+      <button class="tab-btn active" id="tab-songs" onclick="switchTab('songs')">🎵 Songs</button>
+      <button class="tab-btn" id="tab-setlists" onclick="switchTab('setlists')">📋 Setlisten</button>
+    </div>
+    
+    <div id="sidebar-header">
+      <input type="text" id="search" placeholder="Durchsuchen..." oninput="handleSearch()">
+      <div class="btn-row">
+        <button class="btn-primary" id="new-item-btn" onclick="handleNewItem()">+ Neuer Song</button>
+        <button class="btn-secondary" onclick="loadAllData()" title="Aktualisieren">🔄</button>
+        <button class="btn-secondary" onclick="openSettings()" title="Einstellungen">⚙️</button>
+      </div>
+    </div>
+
+    <ul id="song-list" class="list-container"></ul>
+    <ul id="setlist-list" class="list-container" style="display:none;"></ul>
+  </div>
+
+  <div id="main">
+    <div id="toolbar">
+      <div>
+        <span id="current-label" style="font-weight:600; font-size:14.5px; color:#fff;">Kein Element ausgewählt</span>
+        <div id="connection-status">
+          <div id="status-dot" class="status-dot"></div>
+          <span id="status-text">Nicht verbunden</span>
+        </div>
+      </div>
+      <div id="song-actions" style="display:flex; gap:8px;">
+        <button class="btn-danger" id="delete-btn" style="display:none;" onclick="deleteSong()">Löschen</button>
+        <button class="btn-primary" onclick="saveSong()">Speichern</button>
+      </div>
+    </div>
+
+    <div id="content-view">
+      <div id="editor-pane">
+        <textarea id="song-editor" placeholder="{title: Mein Song}&#10;{artist: Band}&#10;{bpm: 120}&#10;{key: Am}&#10;&#10;[Am]Songtext..." oninput="updatePreview()"></textarea>
+      </div>
+      <div id="preview-container">
+        <div id="preview-meta-container">
+          <div id="key-badge" class="meta-badge" style="display:none;"></div>
+          <div id="tempo-badge" class="meta-badge" style="display:none;"></div>
+        </div>
+        <div id="preview-pane"></div>
+      </div>
+    </div>
+
+    <div id="setlist-view">
+      <div class="setlist-card">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+          <h3 id="setlist-detail-title" style="color:#fff; font-size:16px;">Setliste</h3>
+          <div style="display:flex; gap:8px;">
+            <button class="btn-primary" onclick="openAddSongModal()">+ Song hinzufügen</button>
+            <button class="btn-danger" onclick="deleteCurrentSetlist()">Setliste löschen</button>
+          </div>
+        </div>
+        <table class="setlist-table">
+          <thead>
+            <tr>
+              <th style="width:40px;">#</th>
+              <th>Titel</th>
+              <th>Künstler</th>
+              <th>Tonart / Tempo</th>
+              <th style="width:140px; text-align:right;">Aktionen</th>
+            </tr>
+          </thead>
+          <tbody id="setlist-songs-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="settings-modal">
+    <div class="modal-box">
+      <h2 style="font-size:16px;">Supabase Konfiguration</h2>
+      <div class="input-group">
+        <label for="cfg-url">Project URL</label>
+        <input type="text" id="cfg-url" placeholder="https://xyz.supabase.co">
+      </div>
+      <div class="input-group">
+        <label for="cfg-key">Anon Public Key</label>
+        <input type="password" id="cfg-key" placeholder="eyJhbGciOiJIUz...">
+      </div>
+      <div class="modal-actions">
+        <button class="btn-secondary" onclick="closeModal('settings-modal')">Abbrechen</button>
+        <button class="btn-primary" onclick="saveSettings()">Speichern & Verbinden</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="add-song-modal">
+    <div class="modal-box">
+      <h2 style="font-size:16px;">Song zur Setliste hinzufügen</h2>
+      <input type="text" id="modal-song-search" placeholder="Song suchen..." oninput="filterModalSongs()" style="padding:8px; background:#141414; border:1px solid #333; border-radius:5px; color:#fff;">
+      <ul id="modal-song-list" style="max-height:260px; overflow-y:auto; list-style:none; margin-top:8px;"></ul>
+      <div class="modal-actions">
+        <button class="btn-secondary" onclick="closeModal('add-song-modal')">Schließen</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let supabaseClient = null;
+    let songs = [];
+    let setlists = [];
+    let currentSong = null;
+    let currentSetlist = null;
+    let activeTab = 'songs';
+
+    const HEADER_TAGS = ['id', 'title', 't', 'artist', 'a', 'key', 'k', 'tempo', 'bpm', 'capo', 'time', 'duration', 'tags'];
+
+    // Tab-Taste im Editor unterstützt native Tabs (\t)
+    const songEditorEl = document.getElementById('song-editor');
+    songEditorEl.addEventListener('keydown', function(e) {
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        const start = this.selectionStart;
+        const end = this.selectionEnd;
+        this.value = this.value.substring(0, start) + "\t" + this.value.substring(end);
+        this.selectionStart = this.selectionEnd = start + 1;
+        updatePreview();
+      }
+    });
+
+    function escapeHtml(str) {
+      return (str || '').replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function formatKeyDisplay(keyStr) {
+      if (!keyStr) return '';
+      let k = keyStr.trim();
+      if (k.toLowerCase().endsWith('-dur') || k.toLowerCase().endsWith('-moll') || k.toLowerCase().endsWith(' dur') || k.toLowerCase().endsWith(' moll')) {
+        return k;
+      }
+      if (k.endsWith('m') && !k.endsWith('maj') && !k.endsWith('min')) {
+        return k.slice(0, -1) + '-Moll';
+      }
+      if (k.toLowerCase().endsWith('min')) {
+        return k.slice(0, -3).trim() + '-Moll';
+      }
+      if (k.toLowerCase().endsWith('maj')) {
+        return k.slice(0, -3).trim() + '-Dur';
+      }
+      return k + '-Dur';
+    }
+
+    function generateUniqueShortId(existingList, length = 4) {
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+      const existingIds = new Set(existingList.map(s => String(s.id)));
+      let newId = '';
+      do {
+        newId = '';
+        for (let i = 0; i < length; i++) {
+          newId += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+      } while (existingIds.has(newId));
+      return newId;
+    }
+
+    function switchTab(tab) {
+      activeTab = tab;
+      document.getElementById('tab-songs').className = `tab-btn ${tab === 'songs' ? 'active' : ''}`;
+      document.getElementById('tab-setlists').className = `tab-btn ${tab === 'setlists' ? 'active' : ''}`;
+      document.getElementById('song-list').style.display = tab === 'songs' ? 'block' : 'none';
+      document.getElementById('setlist-list').style.display = tab === 'setlists' ? 'block' : 'none';
+      document.getElementById('new-item-btn').innerText = tab === 'songs' ? '+ Neuer Song' : '+ Neue Setliste';
+
+      if (tab === 'songs') {
+        document.getElementById('content-view').style.display = 'flex';
+        document.getElementById('setlist-view').style.display = 'none';
+        document.getElementById('song-actions').style.display = 'flex';
+        if (currentSong) selectSong(currentSong);
+      } else {
+        document.getElementById('content-view').style.display = 'none';
+        document.getElementById('setlist-view').style.display = 'flex';
+        document.getElementById('song-actions').style.display = 'none';
+        if (currentSetlist) selectSetlist(currentSetlist);
+      }
+    }
+
+    function handleNewItem() {
+      if (activeTab === 'songs') newSong();
+      else createNewSetlist();
+    }
+
+    function handleSearch() {
+      const q = document.getElementById('search').value.toLowerCase();
+      if (activeTab === 'songs') {
+        renderSongList(songs.filter(s => s.title.toLowerCase().includes(q) || (s.artist && s.artist.toLowerCase().includes(q))));
+      } else {
+        renderSetlistList(setlists.filter(s => s.name.toLowerCase().includes(q)));
+      }
+    }
+
+    function openSettings() {
+      document.getElementById('cfg-url').value = localStorage.getItem('sb_url') || '';
+      document.getElementById('cfg-key').value = localStorage.getItem('sb_key') || '';
+      document.getElementById('settings-modal').style.display = 'flex';
+    }
+
+    function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+
+    function saveSettings() {
+      const url = document.getElementById('cfg-url').value.trim();
+      const key = document.getElementById('cfg-key').value.trim();
+      if (!url || !key) return alert('Bitte beide Felder ausfüllen.');
+      localStorage.setItem('sb_url', url);
+      localStorage.setItem('sb_key', key);
+      closeModal('settings-modal');
+      initSupabase();
+    }
+
+    async function initSupabase() {
+      const url = localStorage.getItem('sb_url');
+      const key = localStorage.getItem('sb_key');
+      const dot = document.getElementById('status-dot');
+      const statusText = document.getElementById('status-text');
+
+      if (!url || !key) {
+        dot.className = 'status-dot';
+        statusText.innerText = 'Nicht konfiguriert';
+        openSettings();
+        return;
+      }
+
+      try {
+        supabaseClient = window.supabase.createClient(url, key);
+        const { error } = await supabaseClient.from('songs').select('id', { count: 'exact', head: true });
+        if (error) throw error;
+        dot.className = 'status-dot online';
+        statusText.innerText = 'Verbunden mit Supabase';
+        await loadAllData();
+      } catch (err) {
+        dot.className = 'status-dot';
+        statusText.innerText = 'Verbindungsfehler';
+      }
+    }
+
+    async function loadAllData() {
+      if (!supabaseClient) return;
+      const [sRes, slRes] = await Promise.all([
+        supabaseClient.from('songs').select('*').is('deleted_at', null).order('title', { ascending: true }),
+        supabaseClient.from('setlists').select('*').is('deleted_at', null).order('name', { ascending: true })
+      ]);
+      songs = sRes.data || [];
+      setlists = slRes.data || [];
+      renderSongList(songs);
+      renderSetlistList(setlists);
+      if (currentSetlist) {
+        const refreshed = setlists.find(sl => sl.id === currentSetlist.id);
+        if (refreshed) selectSetlist(refreshed);
+      }
+    }
+
+    /* --- SONGS --- */
+    function renderSongList(list) {
+      const ul = document.getElementById('song-list');
+      ul.innerHTML = '';
+      list.forEach(song => {
+        const data = song.data || {};
+        const li = document.createElement('li');
+        li.className = `item ${currentSong && currentSong.id === song.id ? 'active' : ''}`;
+        li.onclick = () => selectSong(song);
+        li.innerHTML = `
+          <div class="item-title">${song.title}</div>
+          <div class="item-sub">${song.artist || 'Unbekannt'} <span style="opacity:0.5;">[${song.id}]</span></div>
+          <div>
+            ${data.key ? `<span class="badge">${formatKeyDisplay(data.key)}</span>` : ''}
+            ${data.bpm ? `<span class="badge">⏱ ${data.bpm}</span>` : ''}
+          </div>
+        `;
+        ul.appendChild(li);
+      });
+    }
+
+    function selectSong(song) {
+      currentSong = song;
+      if (activeTab !== 'songs') switchTab('songs');
+      document.getElementById('delete-btn').style.display = 'inline-block';
+      document.getElementById('current-label').innerText = `${song.title} (${song.artist || 'Unbekannt'})`;
+      
+      const data = song.data || {};
+      let fullText = `{id: ${song.id}}\n{title: ${song.title}}\n{artist: ${song.artist || ''}}\n`;
+      if (data.key) fullText += `{key: ${data.key}}\n`;
+      if (data.bpm) fullText += `{bpm: ${data.bpm}}\n`;
+      if (data.tags) fullText += `{tags: ${Array.isArray(data.tags) ? data.tags.join(', ') : data.tags}}\n`;
+      fullText += `\n${song.lyrics || ''}`;
+
+      document.getElementById('song-editor').value = fullText;
+      updatePreview();
+      renderSongList(songs);
+    }
+
+    function newSong() {
+      currentSong = null;
+      document.getElementById('delete-btn').style.display = 'none';
+      document.getElementById('current-label').innerText = 'Neuer Song';
+      
+      document.getElementById('song-editor').value = 
+`{title: 1_Vorlage}
+{artist: }
+
+$$$$$$$$$$$$$$$$$$$
+{key: C}
+{bpm: 120}
+{scrollspeed: AA}
+Original: C
+FS: C
+CAPO Z
+$$$$$$$$$$$$$$$$$$$
+
+[C]Hier startet der [G]Songtext...`;
+
+      updatePreview();
+      renderSongList(songs);
+    }
+
+    function parseChordPro(text) {
+      const lines = text.split('\n');
+      let html = '';
+      let metaBpm = '', metaKey = '';
+      let inChorus = false;
+      let inVerse = false;
+      let inTab = false;
+      let tabBuffer = [];
+      let currentHighlightColor = null;
+
+      lines.forEach(line => {
+        let trimmed = line.trim();
+
+        // 1. Umgebungsblöcke ({soc}, {sov}, {sot})
+        if (/^{(soc|start_of_chorus)}/i.test(trimmed)) {
+          inChorus = true;
+          html += '<div class="chorus-block">';
+          return;
+        }
+        if (/^{(eoc|end_of_chorus)}/i.test(trimmed)) {
+          inChorus = false;
+          html += '</div>';
+          return;
+        }
+
+        if (/^{(sov|start_of_verse)}/i.test(trimmed)) {
+          inVerse = true;
+          html += '<div class="verse-block">';
+          return;
+        }
+        if (/^{(eov|end_of_verse)}/i.test(trimmed)) {
+          inVerse = false;
+          html += '</div>';
+          return;
+        }
+
+        if (/^{(sot|start_of_tab)}/i.test(trimmed)) {
+          inTab = true;
+          tabBuffer = [];
+          return;
+        }
+        if (/^{(eot|end_of_tab)}/i.test(trimmed)) {
+          inTab = false;
+          html += `<div class="tab-block">${tabBuffer.map(escapeHtml).join('\n')}</div>`;
+          tabBuffer = [];
+          return;
+        }
+        if (inTab) {
+          tabBuffer.push(line);
+          return;
+        }
+
+        // 2. Kommentare {c: Text} / {comment: Text} (ohne Glühbirne)
+        if (/^{(c|comment):/i.test(trimmed)) {
+          const commentText = trimmed.replace(/^{(c|comment):\s*/i, '').replace(/}$/, '');
+          html += `<div class="comment-line">${escapeHtml(commentText)}</div>`;
+          return;
+        }
+
+        // 3. Header-Metadaten für Badges
+        const headerMatch = line.match(/^\{(\w+):\s*(.*)\}$/i);
+        if (headerMatch) {
+          const tag = headerMatch[1].toLowerCase();
+          if (tag === 'bpm' || tag === 'tempo') metaBpm = headerMatch[2].trim();
+          if (tag === 'key') metaKey = headerMatch[2].trim();
+          if (HEADER_TAGS.includes(tag)) return;
+        }
+
+        // 4. Reine Akkord-Zeile (z. B. [Bm]  [F#7]  [A])
+        const withoutTagsAndChords = line.replace(/\{shl:[^}]+\}|\{ehl\}/gi, '').replace(/\[(.*?)\]/g, '').trim();
+        const isChordOnlyLine = withoutTagsAndChords.length === 0 && line.includes('[');
+
+        if (isChordOnlyLine) {
+          let lineContent = line;
+          if (/{shl:(.*?)}/i.test(lineContent)) {
+            currentHighlightColor = lineContent.match(/{shl:(.*?)}/i)[1].trim();
+            lineContent = lineContent.replace(/{shl:.*?}/gi, '');
+          }
+          let endHl = false;
+          if (/{ehl}/i.test(lineContent)) {
+            endHl = true;
+            lineContent = lineContent.replace(/{ehl}/gi, '');
+          }
+
+          const chordMatches = [...lineContent.matchAll(/\[(.*?)\]/g)].map(m => m[1]);
+          const tabbedChords = chordMatches.join('\t');
+          
+          if (currentHighlightColor) {
+            html += `<div class="chord-line"><span style="background-color: ${escapeHtml(currentHighlightColor)}; border-radius: 3px; padding: 2px 4px;">${escapeHtml(tabbedChords)}</span></div>`;
+          } else {
+            html += `<div class="chord-line">${escapeHtml(tabbedChords)}</div>`;
+          }
+
+          if (endHl) currentHighlightColor = null;
+          return;
+        }
+
+        // 5. Standard-Zeile: Parse Akkorde & Text zeichengenau, inkl. Inline-Highlighting
+        let chordLine = '';
+        let lyricHtml = '';
+        let cleanCharIndex = 0;
+        
+        let i = 0;
+        while (i < line.length) {
+          // Start-Highlight {shl:...}
+          if (line.substr(i, 5).toLowerCase() === '{shl:') {
+            const endTag = line.indexOf('}', i);
+            if (endTag !== -1) {
+              currentHighlightColor = line.substring(i + 5, endTag).trim();
+              i = endTag + 1;
+              continue;
+            }
+          }
+          // End-Highlight {ehl}
+          if (line.substr(i, 5).toLowerCase() === '{ehl}') {
+            currentHighlightColor = null;
+            i += 5;
+            continue;
+          }
+
+          // Akkord [Chord]
+          if (line[i] === '[') {
+            const closeBracket = line.indexOf(']', i);
+            if (closeBracket !== -1) {
+              const chordName = line.substring(i + 1, closeBracket);
+              while (chordLine.length < cleanCharIndex) chordLine += ' ';
+              chordLine += chordName;
+              i = closeBracket + 1;
+              continue;
+            }
+          }
+
+          // Normales Textzeichen
+          const char = line[i];
+          const escapedChar = escapeHtml(char);
+          
+          if (currentHighlightColor) {
+            lyricHtml += `<span style="background-color: ${escapeHtml(currentHighlightColor)};">${escapedChar}</span>`;
+          } else {
+            lyricHtml += escapedChar;
+          }
+
+          cleanCharIndex++;
+          i++;
+        }
+
+        if (chordLine.trim().length > 0) {
+          html += `<div class="chord-line">${escapeHtml(chordLine)}</div>`;
+          html += `<div class="lyric-line">${lyricHtml || '&nbsp;'}</div>`;
+        } else {
+          html += `<div class="lyric-line">${lyricHtml || '&nbsp;'}</div>`;
+        }
+      });
+
+      if (inChorus) html += '</div>';
+      if (inVerse) html += '</div>';
+
+      const keyBadge = document.getElementById('key-badge');
+      if (keyBadge) {
+        if (metaKey) {
+          keyBadge.innerHTML = `<span>${formatKeyDisplay(metaKey)}</span>`;
+          keyBadge.style.display = 'inline-flex';
+        } else {
+          keyBadge.style.display = 'none';
+        }
+      }
+
+      const tempoBadge = document.getElementById('tempo-badge');
+      if (tempoBadge) {
+        if (metaBpm) {
+          tempoBadge.innerHTML = `⏱ <span>${metaBpm}</span>`;
+          tempoBadge.style.display = 'inline-flex';
+        } else {
+          tempoBadge.style.display = 'none';
+        }
+      }
+
+      return html;
+    }
+
+    function updatePreview() {
+      document.getElementById('preview-pane').innerHTML = parseChordPro(document.getElementById('song-editor').value);
+    }
+
+    async function saveSong() {
+      if (!supabaseClient) return alert('Bitte erst verbinden.');
+      const raw = document.getElementById('song-editor').value;
+      const lines = raw.split('\n');
+      let parsedId = null, title = 'Unbenannt', artist = '', bpm = null, key = '', tags = [], lyricLines = [];
+      
+      lines.forEach(line => {
+        const match = line.match(/^\{(\w+):\s*(.*)\}$/i);
+        if (match) {
+          const tag = match[1].toLowerCase(), val = match[2].trim();
+          if (tag === 'id' && val.length > 0) parsedId = val;
+          else if (tag === 'title') title = val;
+          else if (tag === 'artist') artist = val;
+          else if (tag === 'bpm' || tag === 'tempo') bpm = parseInt(val, 10) || null;
+          else if (tag === 'key') key = val;
+          else if (tag === 'tags') tags = val.split(',').map(t => t.trim());
+          else {
+            // Songtext-Direktiven ({c:...}, {shl:...} usw.) bleiben im Textkörper erhalten!
+            lyricLines.push(line);
+          }
+        } else {
+          lyricLines.push(line);
+        }
+      });
+      
+      let finalId;
+      if (currentSong && currentSong.id) {
+        finalId = currentSong.id;
+      } else if (parsedId) {
+        finalId = parsedId;
+      } else {
+        finalId = generateUniqueShortId(songs, 4);
+      }
+
+      const payload = {
+        id: finalId,
+        title,
+        artist,
+        lyrics: lyricLines.join('\n').trim(),
+        data: { bpm, key, tags },
+        deleted_at: null,
+        updated_at: new Date().toISOString()
+      };
+
+      const { data, error } = await supabaseClient.from('songs').upsert(payload).select();
+      if (error) {
+        alert('Fehler beim Speichern: ' + error.message);
+      } else { 
+        await loadAllData(); 
+        if (data && data[0]) selectSong(data[0]);
+      }
+    }
+
+    async function deleteSong() {
+      if (!currentSong || !currentSong.id || !confirm(`Song "${currentSong.title}" löschen?`)) return;
+      const { error } = await supabaseClient.from('songs').update({
+        deleted_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }).eq('id', currentSong.id);
+
+      if (error) {
+        alert('Fehler beim Löschen: ' + error.message);
+      } else {
+        currentSong = null;
+        newSong();
+        await loadAllData();
+      }
+    }
+
+    /* --- SETLISTEN --- */
+    function renderSetlistList(list) {
+      const ul = document.getElementById('setlist-list');
+      ul.innerHTML = '';
+      list.forEach(sl => {
+        const songCount = Array.isArray(sl.song_ids) ? sl.song_ids.length : 0;
+        const li = document.createElement('li');
+        li.className = `item ${currentSetlist && currentSetlist.id === sl.id ? 'active' : ''}`;
+        li.onclick = () => selectSetlist(sl);
+        li.innerHTML = `<div class="item-title">${sl.name}</div><div class="item-sub">${songCount} Songs</div>`;
+        ul.appendChild(li);
+      });
+    }
+
+    async function createNewSetlist() {
+      const name = prompt('Name der neuen Setliste:');
+      if (!name) return;
+      const newId = generateUniqueShortId(setlists, 4);
+      const { data, error } = await supabaseClient.from('setlists').insert({
+        id: newId,
+        name: name.trim(),
+        song_ids: [],
+        deleted_at: null,
+        updated_at: new Date().toISOString()
+      }).select();
+      if (error) return alert(error.message);
+      await loadAllData();
+      if (data && data[0]) selectSetlist(data[0]);
+    }
+
+    function selectSetlist(sl) {
+      currentSetlist = sl;
+      document.getElementById('current-label').innerText = `Setliste: ${sl.name}`;
+      document.getElementById('setlist-detail-title').innerText = sl.name;
+      renderSetlistList(setlists);
+      renderSetlistDetail();
+    }
+
+    function renderSetlistDetail() {
+      if (!currentSetlist) return;
+      const tbody = document.getElementById('setlist-songs-body');
+      tbody.innerHTML = '';
+
+      const songIds = Array.isArray(currentSetlist.song_ids) ? currentSetlist.song_ids : [];
+
+      songIds.forEach((songId, idx) => {
+        const song = songs.find(s => String(s.id) === String(songId));
+        const tr = document.createElement('tr');
+        if (song) {
+          const data = song.data || {};
+          tr.innerHTML = `
+            <td style="color:#888;">${idx + 1}</td>
+            <td style="font-weight:bold; cursor:pointer; color:#60a5fa;" onclick="openSongFromSetlist('${song.id}')">${song.title}</td>
+            <td>${song.artist || '-'}</td>
+            <td>${data.key ? formatKeyDisplay(data.key) : ''} ${data.bpm ? `⏱ ${data.bpm}` : ''}</td>
+            <td style="text-align:right;">
+              <button class="btn-icon" onclick="moveSetlistSong(${idx}, -1)">⬆️</button>
+              <button class="btn-icon" onclick="moveSetlistSong(${idx}, 1)">⬇️</button>
+              <button class="btn-icon" style="color:#ef4444;" onclick="removeSongFromSetlist(${idx})">✖</button>
+            </td>
+          `;
+        } else {
+          tr.innerHTML = `
+            <td style="color:#888;">${idx + 1}</td>
+            <td style="color:#ef4444;">Unbekannter Song [${songId}]</td>
+            <td>-</td>
+            <td>-</td>
+            <td style="text-align:right;">
+              <button class="btn-icon" style="color:#ef4444;" onclick="removeSongFromSetlist(${idx})">✖</button>
+            </td>
+          `;
+        }
+        tbody.appendChild(tr);
+      });
+    }
+
+    function openSongFromSetlist(songId) {
+      const s = songs.find(x => String(x.id) === String(songId));
+      if (s) selectSong(s);
+    }
+
+    async function moveSetlistSong(idx, dir) {
+      const targetIdx = idx + dir;
+      const songIds = [...(currentSetlist.song_ids || [])];
+      if (targetIdx < 0 || targetIdx >= songIds.length) return;
+
+      const temp = songIds[idx];
+      songIds[idx] = songIds[targetIdx];
+      songIds[targetIdx] = temp;
+
+      await updateSetlistSongs(songIds);
+    }
+
+    async function removeSongFromSetlist(idx) {
+      const songIds = [...(currentSetlist.song_ids || [])];
+      songIds.splice(idx, 1);
+      await updateSetlistSongs(songIds);
+    }
+
+    async function addSongToSetlist(songId) {
+      const songIds = [...(currentSetlist.song_ids || [])];
+      if (!songIds.includes(String(songId))) {
+        songIds.push(String(songId));
+        await updateSetlistSongs(songIds);
+      }
+      closeModal('add-song-modal');
+    }
+
+    async function updateSetlistSongs(newSongIds) {
+      const { error } = await supabaseClient.from('setlists').update({
+        song_ids: newSongIds,
+        updated_at: new Date().toISOString()
+      }).eq('id', currentSetlist.id);
+
+      if (error) alert('Fehler beim Aktualisieren: ' + error.message);
+      else await loadAllData();
+    }
+
+    async function deleteCurrentSetlist() {
+      if (!currentSetlist || !confirm(`Setliste "${currentSetlist.name}" wirklich löschen?`)) return;
+      const { error } = await supabaseClient.from('setlists').update({
+        deleted_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }).eq('id', currentSetlist.id);
+
+      if (error) {
+        alert('Fehler beim Löschen: ' + error.message);
+      } else {
+        currentSetlist = null;
+        document.getElementById('setlist-songs-body').innerHTML = '';
+        document.getElementById('setlist-detail-title').innerText = 'Keine Setliste';
+        await loadAllData();
+      }
+    }
+
+    function openAddSongModal() {
+      if (!currentSetlist) return;
+      document.getElementById('modal-song-search').value = '';
+      filterModalSongs();
+      document.getElementById('add-song-modal').style.display = 'flex';
+    }
+
+    function filterModalSongs() {
+      const q = document.getElementById('modal-song-search').value.toLowerCase();
+      const ul = document.getElementById('modal-song-list');
+      ul.innerHTML = '';
+      const currentIds = (currentSetlist.song_ids || []).map(String);
+
+      songs.filter(s => !currentIds.includes(String(s.id)) && (s.title.toLowerCase().includes(q) || (s.artist && s.artist.toLowerCase().includes(q))))
+           .forEach(s => {
+             const li = document.createElement('li');
+             li.className = 'item';
+             li.innerHTML = `<div class="item-title">${s.title}</div><div class="item-sub">${s.artist || ''} [${s.id}]</div>`;
+             li.onclick = () => addSongToSetlist(s.id);
+             ul.appendChild(li);
+           });
+    }
+
+    initSupabase();
+  </script>
+</body>
+</html>
