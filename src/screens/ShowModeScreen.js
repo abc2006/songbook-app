@@ -15,7 +15,7 @@ import {
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getSetlistSongs } from '../db/database';
-import { renderChordProLines, transposeKeyDisplay, resolvePreferFlat } from '../utils/chordParser';
+import { renderChordProLines, transposeKeyDisplay, resolvePreferFlat, isNonVocalLeadLine } from '../utils/chordParser';
 import { ChordProLines } from '../components/ChordProLines';
 import { getChordSettings } from '../services/chordSettingsService';
 
@@ -44,6 +44,16 @@ const SCROLL_STEP_FACTOR = 0.8;
 const AUTO_START_DELAY_MAX_SECONDS = 30;
 const CHORD_ONLY_LINE_WEIGHT = 2.0;
 const NORMAL_LINE_WEIGHT = 1.0;
+// Lesemarke = oberer Bildschirmbereich (oberes Drittel), an dem die aktuell
+// "aktive" Zeile idealerweise steht - sowohl für die Speed-Zonen-Grenze als
+// auch für das Fast-Forward-Ziel am Songanfang (siehe firstMusicLineMetricsRef).
+const READING_ZONE_RATIO = 1 / 3;
+// Geschwindigkeitsfaktor für das Fast-Forward über führende $$-Notizen/
+// Header-Zeilen hinweg bis zur ersten echten Musikzeile.
+const FAST_FORWARD_SPEED_FACTOR = 3.0;
+// Interner Fallback-Wert, falls {bpm:} fehlt oder ungültig/0 ist - das
+// BPM-Badge in der Header-Leiste färbt sich in diesem Fall rot (Warnhinweis).
+const FALLBACK_BPM = 120;
 // Zusätzlicher Scroll-Puffer am Songende, damit die letzte Zeile nicht am
 // unteren Bildschirmrand klebt (siehe computeFinalStopY).
 const END_OF_SONG_EXTRA_LINES = 2;
@@ -53,35 +63,26 @@ function estimateLineHeightPx(fontSize) {
   return fontSize * 2;
 }
 
-// Zeilen, die zwar Text enthalten, aber keine "echte" Gesangszeile sind -
-// zählen für den Start-Delay als Notiz mit, beenden aber NICHT den
-// Lead-In-Zähler (siehe computeStartDelaySeconds): $$-Anmerkungszeilen,
-// '#'-Kommentarzeilen (nicht die {c:}/{comment:}-Direktive, die ohnehin
-// als eigener type 'comment' übersprungen wird) sowie reine Taktzähler
-// (z.B. "7" oder "1 2 3 4").
 const NUMERIC_ONLY_LINE_REGEX = /^[0-9\s.-]+$/;
-
-function isNonVocalLeadLine(trimmedLyric) {
-  if (trimmedLyric === '') return true;
-  if (trimmedLyric.startsWith('$$')) return true;
-  if (trimmedLyric.startsWith('#')) return true;
-  if (NUMERIC_ONLY_LINE_REGEX.test(trimmedLyric)) return true;
-  return false;
-}
 
 /**
  * Berechnet die "musikalische Vorlaufzeit" (Start-Delay) bis zum Beginn des
- * Auto-Scrollings: zählt die führenden Zeilen des Songs (vor der ersten
- * echten Gesangszeile mit Text) gewichtet - reine Akkordzeilen/Intro-Zeilen
- * doppelt (CHORD_ONLY_LINE_WEIGHT), Notizen/Taktzähler/normale Zeilen
- * einfach - und rechnet die gewichtete Summe über die geschätzte
- * Zeilenhöhe/Scrollgeschwindigkeit in Sekunden um (auf
- * AUTO_START_DELAY_MAX_SECONDS begrenzt). $$-Notizzeilen, '#'-Kommentare und
- * reine Taktzähler-Zeilen (z.B. "7") gelten NICHT als Gesangstext und
- * stoppen den Zähler nicht - erst die erste Zeile mit echtem Liedtext (z.B.
- * "[Bm]On a dark desert highway...") tut das. Ein {pause:}/{p:} direkt am
- * Songanfang hat Vorrang: liefert dann 0 (kein zusätzliches Auto-Delay), da
- * der normale Pausen-Mechanismus (Marker bei y~0) die Wartezeit übernimmt.
+ * Auto-Scrollings: betrachtet nur die führenden Zeilen des Songs (vor der
+ * ersten echten Gesangszeile mit Text, Grenze via isNonVocalLeadLine) und
+ * gewichtet sie:
+ * - $$-Notizzeilen, '#'-/'//'-Kommentare und Leerzeilen: Faktor 0 - egal wie
+ *   viele davon oben stehen, sie erzeugen KEINE Wartezeit.
+ * - Reine Taktzähler-Zeilen (z.B. "7" oder "1 2 3 4"): Faktor 1.0
+ *   (NORMAL_LINE_WEIGHT), wie eine normale Vorlauf-Zeile.
+ * - Reine Akkordzeilen (Intro/Solo ohne Text): Faktor 2.0
+ *   (CHORD_ONLY_LINE_WEIGHT).
+ * Alle drei Kategorien stoppen den Zähler nicht - erst die erste Zeile mit
+ * echtem Liedtext (z.B. "[Bm]On a dark desert highway...") tut das. Die
+ * gewichtete Summe wird über die geschätzte Zeilenhöhe/Scrollgeschwindigkeit
+ * in Sekunden umgerechnet (auf AUTO_START_DELAY_MAX_SECONDS begrenzt). Ein
+ * {pause:}/{p:} direkt am Songanfang hat Vorrang: liefert dann 0 (kein
+ * zusätzliches Auto-Delay), da der normale Pausen-Mechanismus (Marker bei
+ * y~0) die Wartezeit übernimmt.
  */
 function computeStartDelaySeconds(renderedLines, fontSize, pxPerSecond) {
   if (!renderedLines || renderedLines.length === 0 || pxPerSecond <= 0) return 0;
@@ -94,10 +95,18 @@ function computeStartDelaySeconds(renderedLines, fontSize, pxPerSecond) {
     // Solo) - `chordLine` allein reicht NICHT, das ist auch bei normalen
     // Zeilen mit Inline-Akkorden über echtem Liedtext gesetzt.
     const isPureChordLine = Array.isArray(item.chords);
+    if (isPureChordLine) {
+      weighted += CHORD_ONLY_LINE_WEIGHT;
+      continue;
+    }
+
     const trimmedLyric = (item.lyricLine || '').trim();
-    const isRealVocalLine = !isPureChordLine && !isNonVocalLeadLine(trimmedLyric);
-    if (isRealVocalLine) break; // z.B. "[Bm]On a dark desert highway..."
-    weighted += isPureChordLine ? CHORD_ONLY_LINE_WEIGHT : NORMAL_LINE_WEIGHT;
+    if (!isNonVocalLeadLine(trimmedLyric)) break; // echte Gesangszeile erreicht
+
+    if (NUMERIC_ONLY_LINE_REGEX.test(trimmedLyric)) {
+      weighted += NORMAL_LINE_WEIGHT; // Taktzähler
+    }
+    // $$-Notizen, '#'/'//'-Kommentare und Leerzeilen: Faktor 0, kein Zuwachs.
   }
   if (weighted <= 0) return 0;
 
@@ -122,7 +131,12 @@ function SongPage({
   onSpeedZonesChange,
   onContentMetricsChange,
   onLastLineMetricsChange,
+  onFirstMusicLineMetricsChange,
   onStartDelayComputed,
+  countdown,
+  countdownBarWidth,
+  countdownOpacity,
+  onSkipCountdown,
 }) {
   // Sammelt die vertikalen Positionen der {pause:}/{p:}-Marker sowie der
   // speedZoneStart/speedZoneEnd-Marker ({sos:}/{eos} und automatisch
@@ -180,6 +194,10 @@ function SongPage({
     if (active && onLastLineMetricsChange) onLastLineMetricsChange({ y, height });
   }
 
+  function handleFirstMusicLineLayout(y, height) {
+    if (active && onFirstMusicLineMetricsChange) onFirstMusicLineMetricsChange({ y, height });
+  }
+
   if (!song) {
     return <View style={{ flex: 1 }} />;
   }
@@ -193,7 +211,13 @@ function SongPage({
   const renderedLines = renderChordProLines(song.lyrics || '', transpose, preferFlat);
   const keyDisplay = transposeKeyDisplay(song.data?.key, transpose, preferFlat);
   const fontSize = Number(song.data?.fontsize) > 0 ? Number(song.data.fontsize) : 20;
-  const bpm = song.data?.bpm || '-';
+  // Fehlt {bpm:} oder ist der Wert 0/ungültig, wird intern ein Fallback von
+  // FALLBACK_BPM verwendet, damit immer ein sinnvoller Wert vorliegt - das
+  // BPM-Badge färbt sich in diesem Fall knallrot als Warnhinweis, dass dem
+  // Song der BPM-Tag fehlt.
+  const rawBpm = Number(song.data?.bpm);
+  const hasValidBpm = Number.isFinite(rawBpm) && rawBpm > 0;
+  const bpm = hasValidBpm ? rawBpm : FALLBACK_BPM;
 
   // Letzte "echte" Text-/Akkordzeile (leere Zeilen am Songende ignoriert) -
   // für den intelligenten Auto-Scroll-Stopp am Songende.
@@ -207,6 +231,24 @@ function SongPage({
         lastLineIndex = i;
         break;
       }
+    }
+  }
+
+  // Erste "echte" musikalische Zeile (reine Akkordzeile ODER Gesangstext) -
+  // unter Umgehung führender $$-Notizen/#-/'//'-Kommentare/Taktzähler -
+  // Ziel der Fast-Forward-zur-Lesemarke-Logik am Songanfang.
+  let firstMusicLineIndex = -1;
+  for (let i = 0; i < renderedLines.length; i++) {
+    const item = renderedLines[i];
+    if (item.type !== 'line') continue;
+    if (Array.isArray(item.chords)) {
+      firstMusicLineIndex = i;
+      break;
+    }
+    const trimmedLyric = (item.lyricLine || '').trim();
+    if (trimmedLyric !== '' && !isNonVocalLeadLine(trimmedLyric)) {
+      firstMusicLineIndex = i;
+      break;
     }
   }
 
@@ -243,7 +285,7 @@ function SongPage({
               <Text style={styles.headerBadgeText}>{keyDisplay}</Text>
             </View>
           ) : null}
-          <View style={[styles.headerBadge, styles.headerBadgeSpacing]}>
+          <View style={[styles.headerBadge, styles.headerBadgeSpacing, !hasValidBpm && styles.headerBadgeWarning]}>
             <Text style={styles.headerBadgeText}>⏱ {bpm}</Text>
           </View>
           {song.data?.capo ? (
@@ -254,26 +296,50 @@ function SongPage({
         </View>
       </View>
 
-      <ScrollView
-        ref={scrollRef}
-        style={[styles.scrollArea, { backgroundColor }]}
-        scrollEnabled={active}
-        onScroll={onScroll}
-        onScrollBeginDrag={active ? onScrollBeginDrag : undefined}
-        onLayout={active ? handleScrollViewLayout : undefined}
-        onContentSizeChange={active ? handleContentSizeChange : undefined}
-        scrollEventThrottle={16}
-      >
-        <ChordProLines
-          lines={renderedLines}
-          fontSize={fontSize}
-          onPauseLayout={active ? handlePauseLayout : undefined}
-          onSpeedZoneLayout={active ? handleSpeedZoneLayout : undefined}
-          lastLineIndex={active ? lastLineIndex : undefined}
-          onLastLineLayout={active ? handleLastLineLayout : undefined}
-        />
-        <View style={{ height: 300 }} />
-      </ScrollView>
+      <View style={styles.scrollWrap}>
+        <ScrollView
+          ref={scrollRef}
+          style={[styles.scrollArea, { backgroundColor }]}
+          scrollEnabled={active}
+          onScroll={onScroll}
+          onScrollBeginDrag={active ? onScrollBeginDrag : undefined}
+          onLayout={active ? handleScrollViewLayout : undefined}
+          onContentSizeChange={active ? handleContentSizeChange : undefined}
+          scrollEventThrottle={16}
+        >
+          <ChordProLines
+            lines={renderedLines}
+            fontSize={fontSize}
+            onPauseLayout={active ? handlePauseLayout : undefined}
+            onSpeedZoneLayout={active ? handleSpeedZoneLayout : undefined}
+            lastLineIndex={active ? lastLineIndex : undefined}
+            onLastLineLayout={active ? handleLastLineLayout : undefined}
+            firstMusicLineIndex={active ? firstMusicLineIndex : undefined}
+            onFirstMusicLineLayout={active ? handleFirstMusicLineLayout : undefined}
+          />
+          <View style={{ height: 300 }} />
+        </ScrollView>
+
+        {/* Countdown-/Fortschrittsleiste als schwebendes Overlay direkt unter
+            der Header-Leiste - nimmt bewusst KEINEN Platz im Layout-Fluss
+            ein, damit der Songtext beim Ein-/Ausblenden nicht springt (siehe
+            scrollWrap: position 'relative' + hier: 'absolute'). */}
+        {active && countdown ? (
+          <Animated.View style={[styles.countdownOverlay, { opacity: countdownOpacity }]} pointerEvents="box-none">
+            <TouchableOpacity style={styles.countdownBar} activeOpacity={0.75} onPress={onSkipCountdown}>
+              <Animated.View
+                style={[
+                  styles.countdownBarFill,
+                  { width: countdownBarWidth.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }) },
+                ]}
+              />
+              <Text style={styles.countdownBarText}>
+                {countdown.type === 'start' ? `⏳ Start in ${countdown.remaining}s` : `⏸ Pause: ${countdown.remaining}s`}
+              </Text>
+            </TouchableOpacity>
+          </Animated.View>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -313,6 +379,7 @@ export function ShowModeScreen() {
   const isAnimatingRef = useRef(false);
   const dragX = useRef(new Animated.Value(0)).current;
   const countdownBarWidth = useRef(new Animated.Value(0)).current;
+  const countdownOpacity = useRef(new Animated.Value(1)).current;
 
   // {pause:}/{p:}-Marker der aktuellen Seite (Auto-Scroll-Stopps).
   const activePauseMarkersRef = useRef([]);
@@ -332,13 +399,18 @@ export function ShowModeScreen() {
   // komplett auf den Bildschirm" sowie den intelligenten Songende-Stopp).
   const contentMetricsRef = useRef({ contentHeight: 0, viewportHeight: 0, fits: false });
   const lastLineMetricsRef = useRef(null); // {y, height} der letzten echten Zeile, oder null
+  const firstMusicLineMetricsRef = useRef(null); // {y, height} der ersten echten Musikzeile, oder null
 
   // Berechnetes Start-Delay (Sekunden) der aktuellen Seite (siehe
-  // computeStartDelaySeconds) sowie ob es für diesen Song schon "verbraucht"
-  // wurde (verhindert Mehrfach-Trigger bei wiederholtem Stop/Start an
-  // Position 0).
+  // computeStartDelaySeconds), für eine an der Lesemarke stehende
+  // Intro-Akkordzeile.
   const startDelaySecondsRef = useRef(0);
-  const startDelayAppliedRef = useRef(false);
+  // Einmal-Gate pro Song: entscheidet am Songanfang (scrollY=0), ob ein
+  // Fast-Forward zur ersten Musikzeile nötig ist bzw. löst andernfalls
+  // direkt das Start-Delay aus (siehe Tick-Effekt).
+  const introHandledRef = useRef(false);
+  // Aktives Fast-Forward-Ziel (scrollY-Wert) oder null, wenn keins läuft.
+  const fastForwardTargetRef = useRef(null);
 
   useEffect(() => {
     entriesRef.current = entries;
@@ -411,20 +483,35 @@ export function ShowModeScreen() {
   );
 
   /**
-   * Bricht einen laufenden Countdown (Start-Delay ODER {pause:}-Marker)
-   * sofort ab: Balken blendet aus, Auto-Scroll läuft im nächsten Tick direkt
-   * ab der aktuellen scrollY-Position weiter - egal ob durch Tippen auf den
-   * Balken (Skip) oder durch manuelles Scrollen (onScrollBeginDrag).
+   * Beendet einen laufenden Countdown (Start-Delay ODER {pause:}-Marker):
+   * gibt den Auto-Scroll-Tick SOFORT frei (läuft ab der aktuellen
+   * scrollY-Position zeitgleich weiter, kein Warten auf die Animation), die
+   * Leiste selbst blendet nur optisch per Fade-Out (200ms) aus und wird erst
+   * danach unmounted - egal ob durch Ablauf, Tippen auf die Leiste (Skip)
+   * oder durch manuelles Scrollen (onScrollBeginDrag).
    */
-  function clearCountdown() {
+  function finishCountdown() {
     if (countdownIntervalRef.current) {
       clearInterval(countdownIntervalRef.current);
       countdownIntervalRef.current = null;
     }
     countdownBarWidth.stopAnimation();
-    countdownBarWidth.setValue(0);
     isPausedForCountdownRef.current = false;
-    setCountdown(null);
+
+    Animated.timing(countdownOpacity, {
+      toValue: 0,
+      duration: 200,
+      useNativeDriver: true,
+    }).start(() => {
+      setCountdown(null);
+      countdownBarWidth.setValue(0);
+      countdownOpacity.setValue(1); // für den nächsten Countdown zurücksetzen
+    });
+  }
+
+  /** Öffentlicher Skip-Handler (Tippen auf die Leiste / manuelles Scrollen). */
+  function clearCountdown() {
+    finishCountdown();
   }
 
   /**
@@ -439,6 +526,7 @@ export function ShowModeScreen() {
     countdownMetaRef.current = { type, totalMs, startTime: Date.now() };
     setCountdown({ type, remaining: Math.ceil(seconds) });
 
+    countdownOpacity.setValue(1);
     countdownBarWidth.stopAnimation();
     countdownBarWidth.setValue(0);
     Animated.timing(countdownBarWidth, {
@@ -453,10 +541,7 @@ export function ShowModeScreen() {
       const { totalMs: total, startTime } = countdownMetaRef.current;
       const elapsed = Date.now() - startTime;
       if (elapsed >= total) {
-        clearInterval(countdownIntervalRef.current);
-        countdownIntervalRef.current = null;
-        isPausedForCountdownRef.current = false;
-        setCountdown(null);
+        finishCountdown();
       } else {
         setCountdown({ type, remaining: Math.max(0, Math.ceil((total - elapsed) / 1000)) });
       }
@@ -479,12 +564,21 @@ export function ShowModeScreen() {
     lastLineMetricsRef.current = metrics;
   }
 
+  function handleFirstMusicLineMetricsChange(metrics) {
+    firstMusicLineMetricsRef.current = metrics;
+  }
+
   function handleStartDelayComputed(seconds) {
     startDelaySecondsRef.current = seconds;
   }
 
-  /** onScrollBeginDrag: Nutzer greift manuell ein - Countdown sofort abbrechen. */
+  /**
+   * onScrollBeginDrag: Nutzer greift manuell ein - Countdown UND ein
+   * eventuell laufendes Fast-Forward sofort abbrechen, der Auto-Scroll
+   * übernimmt direkt ab der neuen, manuell eingestellten Position.
+   */
   function handleScrollBeginDrag() {
+    fastForwardTargetRef.current = null;
     clearCountdown();
   }
 
@@ -517,8 +611,10 @@ export function ShowModeScreen() {
     activeSpeedZonesRef.current = [];
     contentMetricsRef.current = { contentHeight: 0, viewportHeight: 0, fits: false };
     lastLineMetricsRef.current = null;
+    firstMusicLineMetricsRef.current = null;
     startDelaySecondsRef.current = 0;
-    startDelayAppliedRef.current = false;
+    introHandledRef.current = false;
+    fastForwardTargetRef.current = null;
     clearCountdown();
     // eslint-disable-next-line
   }, [index]);
@@ -541,20 +637,76 @@ export function ShowModeScreen() {
 
     const baseSpeed = Number(currentSong.data?.scrollSpeed) > 0 ? Number(currentSong.data.scrollSpeed) : 1;
 
-    // Intelligentes Start-Delay: nur auslösen, wenn der Song noch ganz am
-    // Anfang steht (Position 0, kein manuelles Vor-Scrollen) und dieses
-    // Delay für den aktuellen Song noch nicht verbraucht wurde. Ein
-    // {pause:}/{p:} ganz oben im Song führt bereits zu Delay=0 (siehe
-    // computeStartDelaySeconds) - der normale Pausen-Marker-Mechanismus
-    // unten übernimmt die Wartezeit dann stattdessen.
-    if (scrollY.current <= 0 && !startDelayAppliedRef.current) {
-      startDelayAppliedRef.current = true;
-      if (startDelaySecondsRef.current > 0) {
-        startCountdown('start', startDelaySecondsRef.current);
+    // Einmalig am Songanfang (scrollY=0) - Fall 1 vs. Fall 2: Steht die
+    // erste echte Musikzeile (reine Akkordzeile oder Gesangstext, unter
+    // Umgehung führender $$-Notizen/#-Kommentare/Taktzähler) beim Start
+    // unterhalb der Lesemarke (oberes Drittel des Bildschirms), wird
+    // zunächst mit FAST_FORWARD_SPEED_FACTOR bis exakt dorthin vorgespult
+    // (Fall 1, siehe Tick unten). Steht sie schon davor/darauf (Fall 2),
+    // wird direkt das Start-Delay für eine dort stehende Intro-Akkordzeile
+    // ausgelöst - ein {pause:}/{p:} ganz oben im Song führt bereits zu
+    // Delay=0 (siehe computeStartDelaySeconds), der normale
+    // Pausen-Marker-Mechanismus unten übernimmt die Wartezeit dann
+    // stattdessen.
+    //
+    // Live-Fallback (höchste Priorität): Messwerte (onFirstMusicLineLayout),
+    // Content-Metriken oder das Start-Delay können fehlen/ungültig sein
+    // (z.B. Layout noch nicht fertig) - der Bildlauf darf dadurch NIEMALS
+    // blockieren. Jeder Zweifels-/Fehlerfall fällt hart auf "kein
+    // Fast-Forward, kein Delay, sofort 1.0x" zurück. Das Fast-Forward-Ziel
+    // wird zusätzlich auf die tatsächlich verfügbare Scroll-Strecke
+    // geclampt, damit es nie über das native Scroll-Ende hinausschießt (das
+    // sonst wie ein eingefrorener Bildlauf wirkt, weil die ScrollView optisch
+    // längst am Anschlag ist, während intern noch "vorgespult" wird).
+    if (scrollY.current <= 0 && !introHandledRef.current) {
+      introHandledRef.current = true;
+
+      const firstMusic = firstMusicLineMetricsRef.current;
+      const hasValidFirstMusic = !!firstMusic && Number.isFinite(firstMusic.y);
+      const rawTargetY = hasValidFirstMusic ? firstMusic.y - screenHeight * READING_ZONE_RATIO : 0;
+
+      const { contentHeight, viewportHeight } = contentMetricsRef.current;
+      const maxScrollY =
+        Number.isFinite(contentHeight) && Number.isFinite(viewportHeight)
+          ? Math.max(0, contentHeight - viewportHeight)
+          : Infinity;
+      const targetY = Number.isFinite(rawTargetY) ? Math.min(rawTargetY, maxScrollY) : 0;
+
+      const delaySeconds = Number.isFinite(startDelaySecondsRef.current) ? startDelaySecondsRef.current : 0;
+
+      if (targetY > 0) {
+        fastForwardTargetRef.current = targetY;
+      } else if (delaySeconds > 0) {
+        startCountdown('start', delaySeconds);
       }
     }
 
     const intervalId = setInterval(() => {
+      // Fast-Forward-Phase: mit FAST_FORWARD_SPEED_FACTOR bis exakt zur
+      // Lesemarke vorspulen, dann im selben Takt-Rhythmus (kein Ruckeln)
+      // direkt ins Start-Delay bzw. normale Programm übergeben. Live-
+      // Fallback: ein ungültiges Ziel bricht das Fast-Forward sofort ab,
+      // statt zu blockieren.
+      if (fastForwardTargetRef.current !== null) {
+        if (!Number.isFinite(fastForwardTargetRef.current)) {
+          fastForwardTargetRef.current = null;
+        } else {
+          scrollY.current = Math.min(
+            fastForwardTargetRef.current,
+            scrollY.current + baseSpeed * FAST_FORWARD_SPEED_FACTOR * SCROLL_STEP_FACTOR
+          );
+          scrollRef.current?.scrollTo({ y: scrollY.current, animated: false });
+          if (scrollY.current >= fastForwardTargetRef.current) {
+            fastForwardTargetRef.current = null;
+            const delaySeconds = Number.isFinite(startDelaySecondsRef.current) ? startDelaySecondsRef.current : 0;
+            if (delaySeconds > 0) {
+              startCountdown('start', delaySeconds);
+            }
+          }
+          return;
+        }
+      }
+
       // Während eines Start-Delay- oder {pause:}/{p:}-Countdowns steht der
       // Bildlauf exakt still, der Interval-Takt läuft aber weiter (einfacher
       // als ihn ab-/wieder aufzubauen) - er überspringt hier nur das Scrollen.
@@ -563,7 +715,7 @@ export function ShowModeScreen() {
       // Lesezone = oberes Drittel des Viewports; sobald ihr y-Wert einen
       // speedZoneStart/speedZoneEnd-Marker erreicht, ändert sich der
       // Geschwindigkeitsfaktor (Solo-/Instrumental-Passagen langsamer).
-      const boundaryY = scrollY.current + screenHeight / 3;
+      const boundaryY = scrollY.current + screenHeight * READING_ZONE_RATIO;
       const speedFactor = computeSpeedFactor(activeSpeedZonesRef.current, boundaryY);
 
       const prevY = scrollY.current;
@@ -729,23 +881,6 @@ export function ShowModeScreen() {
   // Statusleisten-Symbole unlesbar machen würde).
   const statusBarSpacer = <View style={{ height: insets.top, backgroundColor: STATUS_BAR_BACKGROUND }} />;
 
-  // Vereinheitlichte, dezente Countdown-/Fortschrittsleiste direkt unter der
-  // Statusleiste - Fall A (Start-Delay): "⏳ Start in Xs", Fall B
-  // ({pause:}/{p:}-Marker): "⏸ Pause: Xs". Tippen überspringt sofort.
-  const countdownBar = countdown ? (
-    <TouchableOpacity style={styles.countdownBar} activeOpacity={0.75} onPress={clearCountdown}>
-      <Animated.View
-        style={[
-          styles.countdownBarFill,
-          { width: countdownBarWidth.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }) },
-        ]}
-      />
-      <Text style={styles.countdownBarText}>
-        {countdown.type === 'start' ? `⏳ Start in ${countdown.remaining}s` : `⏸ Pause: ${countdown.remaining}s`}
-      </Text>
-    </TouchableOpacity>
-  ) : null;
-
   if (!currentSong) {
     return (
       <View style={[styles.container, { backgroundColor }]}>
@@ -760,7 +895,6 @@ export function ShowModeScreen() {
     <View style={[styles.container, { backgroundColor }]}>
       {statusBarOverride}
       {statusBarSpacer}
-      {countdownBar}
       <View
         style={styles.carousel}
         {...panResponder.panHandlers}
@@ -781,7 +915,12 @@ export function ShowModeScreen() {
             onSpeedZonesChange={handleActiveSpeedZonesChange}
             onContentMetricsChange={handleContentMetricsChange}
             onLastLineMetricsChange={handleLastLineMetricsChange}
+            onFirstMusicLineMetricsChange={handleFirstMusicLineMetricsChange}
             onStartDelayComputed={handleStartDelayComputed}
+            countdown={countdown}
+            countdownBarWidth={countdownBarWidth}
+            countdownOpacity={countdownOpacity}
+            onSkipCountdown={clearCountdown}
           />
         </Animated.View>
         <Animated.View style={[styles.page, { left: screenWidth, width: screenWidth, transform: [{ translateX: dragX }] }]}>
@@ -818,6 +957,20 @@ const styles = StyleSheet.create({
   },
   headerBadgeSpacing: { marginLeft: 8 },
   headerBadgeText: { color: '#FFF', fontSize: 15, fontWeight: 'bold' },
+  // Warnhinweis: BPM-Badge zeigt einen Fallback-Wert, weil {bpm:} im Song fehlt/ungültig ist.
+  headerBadgeWarning: { backgroundColor: '#DC2626' },
+  scrollWrap: { flex: 1, position: 'relative' },
+  // Schwebendes Overlay direkt unter der Header-Leiste (top:0 relativ zu
+  // scrollWrap, das genau dort beginnt) - nimmt keinen Platz im Layout-Fluss
+  // ein, damit der Songtext beim Ein-/Ausblenden nicht springt.
+  countdownOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 20,
+    elevation: 20,
+  },
   countdownBar: {
     height: 30,
     justifyContent: 'center',

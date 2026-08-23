@@ -411,6 +411,41 @@ function buildLyricSegments(lyric, highlightRanges) {
   return segments;
 }
 
+// Zeilen, die zwar Text enthalten, aber keine "echte" Gesangszeile sind -
+// zählen für das Show-Modus-Start-Delay als Notiz mit, beenden aber nicht
+// den Intro-/Lead-In-Zähler: $$-Anmerkungszeilen, '#'-/'//'-Kommentarzeilen
+// (nicht die {c:}/{comment:}-Direktive, die als eigener type 'comment'
+// geführt wird) sowie reine Taktzähler (z.B. "7" oder "1 2 3 4"). Exportiert,
+// damit ShowModeScreen.js (computeStartDelaySeconds) und
+// autoDetectSoloSpeedZones hier dieselbe Intro-Grenze verwenden.
+const NUMERIC_ONLY_LINE_REGEX = /^[0-9\s.-]+$/;
+
+export function isNonVocalLeadLine(trimmedLyric) {
+  if (trimmedLyric === '') return true;
+  if (trimmedLyric.startsWith('$$')) return true;
+  if (trimmedLyric.startsWith('#')) return true;
+  if (trimmedLyric.startsWith('//')) return true;
+  if (NUMERIC_ONLY_LINE_REGEX.test(trimmedLyric)) return true;
+  return false;
+}
+
+/**
+ * Ermittelt den Index der ersten "echten" Gesangszeile (normale Zeile mit
+ * tatsächlichem Liedtext, keine reine Akkordzeile und keine Notiz/Kommentar/
+ * Taktzähler-Zeile) - alles davor gilt als Song-Intro. Liefert items.length,
+ * wenn der ganze Song keine solche Zeile enthält.
+ */
+function findIntroEndIndex(items) {
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (item.type !== 'line') continue;
+    if (Array.isArray(item.chords)) continue; // reine Akkordzeile - noch Intro
+    const trimmedLyric = (item.lyricLine || '').trim();
+    if (!isNonVocalLeadLine(trimmedLyric)) return i;
+  }
+  return items.length;
+}
+
 /**
  * Zweiter Durchlauf über die von renderChordProLines() gebauten Zeilen-/
  * Blockobjekte: erkennt Läufe aufeinanderfolgender reiner Akkordzeilen
@@ -418,7 +453,11 @@ function buildLyricSegments(lyric, highlightRanges) {
  * Text) außerhalb bereits expliziter {sos:}/{eos}-Blöcke und umschließt sie
  * automatisch mit denselben speedZoneStart/speedZoneEnd-Markern (Faktor
  * AUTO_SOLO_SPEED_FACTOR), damit die Show-Modus-Engine sie identisch wie
- * einen expliziten Speed-Block behandelt.
+ * einen expliziten Speed-Block behandelt. Das Song-Intro (vor der ersten
+ * echten Gesangszeile, siehe findIntroEndIndex) wird dabei bewusst NICHT
+ * automatisch gedrosselt - das Start-Delay im Show-Modus (computeStartDelay-
+ * Seconds) rechnet die zusätzliche Vorlaufzeit für Intro-Akkorde bereits mit
+ * ein, eine zusätzliche 0.5x-Drosselung beim Losscrollen wäre doppelt.
  */
 function autoDetectSoloSpeedZones(items) {
   const explicitRanges = [];
@@ -432,11 +471,13 @@ function autoDetectSoloSpeedZones(items) {
     }
   });
   const isInExplicitRange = (i) => explicitRanges.some(([s, e]) => i > s && i < e);
+  const introEndIndex = findIntroEndIndex(items);
 
   const output = [];
   let runOpen = false;
   items.forEach((item, idx) => {
-    const isPureChordLine = item.type === 'line' && Array.isArray(item.chords) && !isInExplicitRange(idx);
+    const isPureChordLine =
+      item.type === 'line' && Array.isArray(item.chords) && !isInExplicitRange(idx) && idx >= introEndIndex;
     if (isPureChordLine && !runOpen) {
       output.push({ type: 'speedZoneStart', factor: AUTO_SOLO_SPEED_FACTOR });
       runOpen = true;

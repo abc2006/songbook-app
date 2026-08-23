@@ -97,8 +97,21 @@ function LyricLine({ line, textStyle }) {
  * UND gerenderte Höhe der letzten "echten" Text-/Akkordzeile (nicht die
  * eines Kommentars/Markers) - für den intelligenten Auto-Scroll-Stopp am
  * Songende im Show-Modus (siehe ShowModeScreen).
+ * `firstMusicLineIndex`/`onFirstMusicLineLayout(y, height)` (optional) analog
+ * für die erste "echte" musikalische Zeile (reine Akkordzeile oder
+ * Gesangstext, unter Umgehung von $$-Notizen/#-Kommentaren) - für die
+ * Fast-Forward-zur-Lesemarke-Logik am Songanfang im Show-Modus.
  */
-export function ChordProLines({ lines, fontSize, onPauseLayout, onSpeedZoneLayout, lastLineIndex, onLastLineLayout }) {
+export function ChordProLines({
+  lines,
+  fontSize,
+  onPauseLayout,
+  onSpeedZoneLayout,
+  lastLineIndex,
+  onLastLineLayout,
+  firstMusicLineIndex,
+  onFirstMusicLineLayout,
+}) {
   const { typography } = getChordSettings();
   const scale = (fontSize || DEFAULT_BASE_FONT_SIZE) / DEFAULT_BASE_FONT_SIZE;
   const chordStyle = chordTextStyle(typography, scale);
@@ -148,10 +161,16 @@ export function ChordProLines({ lines, fontSize, onPauseLayout, onSpeedZoneLayou
 
         const textStyle = sectionTextStyle(line.section, typography, scale);
         const isBorderedChorus = line.section === 'chorus' && typography.chorus.style === 'border';
-        const lastLineLayoutProps =
-          idx === lastLineIndex
-            ? { onLayout: (e) => onLastLineLayout && onLastLineLayout(e.nativeEvent.layout.y, e.nativeEvent.layout.height) }
-            : null;
+        const layoutCallbacks = [];
+        if (idx === lastLineIndex && onLastLineLayout) {
+          layoutCallbacks.push((e) => onLastLineLayout(e.nativeEvent.layout.y, e.nativeEvent.layout.height));
+        }
+        if (idx === firstMusicLineIndex && onFirstMusicLineLayout) {
+          layoutCallbacks.push((e) => onFirstMusicLineLayout(e.nativeEvent.layout.y, e.nativeEvent.layout.height));
+        }
+        const lastLineLayoutProps = layoutCallbacks.length
+          ? { onLayout: (e) => layoutCallbacks.forEach((cb) => cb(e)) }
+          : null;
 
         if (line.chords) {
           const colWidth = Math.round(chordStyle.fontSize * 4.5);
