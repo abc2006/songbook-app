@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
   <meta charset="UTF-8">
-  <title>SWE v14</title>
+  <title>SWE v15</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
@@ -22,6 +22,8 @@
     button { padding: 7px 12px; border: none; border-radius: 5px; cursor: pointer; font-weight: 600; font-size: 12px; transition: opacity 0.2s; }
     button:hover { opacity: 0.9; }
     .btn-primary { background: #2563eb; color: #fff; flex: 1; }
+    #save-btn:disabled { background: #3a3a3a; color: #777; cursor: not-allowed; box-shadow: none; opacity: 1; }
+    #save-btn.dirty { background: #2563eb; box-shadow: 0 0 10px 1px rgba(37,99,235,0.7); }
     .btn-secondary { background: #2d2d2d; color: #ccc; border: 1px solid #404040; }
     .btn-danger { background: #dc2626; color: #fff; }
     .btn-icon { padding: 4px 8px; font-size: 12px; background: #2a2a2a; color: #aaa; border-radius: 4px; }
@@ -110,6 +112,10 @@
     .verse-block { border-left: 2px solid #4b5563; padding-left: 8px; margin: 8px 0; }
     .tab-block { background: #000; border: 1px solid #262626; color: #4ade80; padding: 6px 10px; border-radius: 4px; font-family: "Courier New", Courier, monospace; margin: 6px 0; white-space: pre; }
     .highlight-span { border-radius: 3px; padding: 1px 4px; }
+    .pause-badge { display: inline-flex; align-items: center; gap: 6px; background: rgba(59,130,246,0.15); border: 1px dashed #3b82f6; color: #93c5fd; font-size: 12px; font-weight: bold; padding: 3px 10px; border-radius: 999px; margin: 6px 0; opacity: 0.9; }
+    .notes-divider { border: none; border-top: 1px dashed #3f3f3f; margin: 8px 0; }
+    .note-line { color: #fbbf24; font-style: italic; opacity: 0.85; margin: 2px 0; }
+    .meta-tag-line { display: inline-block; color: #a78bfa; font-size: 11.5px; font-family: "Courier New", Courier, monospace; background: rgba(167,139,250,0.12); border: 1px solid rgba(167,139,250,0.3); border-radius: 4px; padding: 2px 6px; margin: 3px 0; }
 
     #setlist-view { flex: 1; display: none; padding: 24px; overflow-y: auto; flex-direction: column; gap: 20px; max-width: 850px; margin: 0 auto; width: 100%; }
     .setlist-card { background: #1a1a1a; border: 1px solid #2d2d2d; border-radius: 8px; padding: 16px; }
@@ -157,13 +163,13 @@
       </div>
       <div id="song-actions" style="display:flex; gap:8px;">
         <button class="btn-danger" id="delete-btn" style="display:none;" onclick="deleteSong()">Löschen</button>
-        <button class="btn-primary" onclick="saveSong()">Speichern</button>
+        <button class="btn-primary" id="save-btn" onclick="saveSong()" disabled>Speichern</button>
       </div>
     </div>
 
     <div id="content-view">
       <div id="editor-pane">
-        <textarea id="song-editor" placeholder="{title: Mein Song}&#10;{artist: Band}&#10;{bpm: 120}&#10;{key: Am}&#10;&#10;[Am]Songtext..." oninput="updatePreview()"></textarea>
+        <textarea id="song-editor" placeholder="{title: Mein Song}&#10;{artist: Band}&#10;{bpm: 120}&#10;{key: Am}&#10;&#10;[Am]Songtext..." oninput="updatePreview(); markDirty();"></textarea>
       </div>
       <div id="preview-container">
         <div id="preview-meta-container">
@@ -248,8 +254,19 @@
         this.value = this.value.substring(0, start) + "\t" + this.value.substring(end);
         this.selectionStart = this.selectionEnd = start + 1;
         updatePreview();
+        markDirty();
       }
     });
+
+    function setSaveButtonState(dirty) {
+      const btn = document.getElementById('save-btn');
+      btn.disabled = !dirty;
+      btn.classList.toggle('dirty', dirty);
+    }
+
+    function markDirty() {
+      setSaveButtonState(true);
+    }
 
     function escapeHtml(str) {
       return (str || '').replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -418,6 +435,7 @@
       document.getElementById('song-editor').value = fullText;
       updatePreview();
       renderSongList(songs);
+      setSaveButtonState(false);
     }
 
     function newSong() {
@@ -442,6 +460,7 @@ $$$$$$$$$$$$$$$$$$$
 
       updatePreview();
       renderSongList(songs);
+      setSaveButtonState(false);
     }
 
     function parseChordPro(text) {
@@ -451,6 +470,7 @@ $$$$$$$$$$$$$$$$$$$
       let inChorus = false;
       let inVerse = false;
       let inTab = false;
+      let inNotesBlock = false;
       let tabBuffer = [];
       let currentHighlightColor = null;
 
@@ -503,6 +523,22 @@ $$$$$$$$$$$$$$$$$$$
           return;
         }
 
+        // 2b. Pausen-Badges {pause: X} / {p: X} (X = Sekunden)
+        const pauseMatch = trimmed.match(/^\{(pause|p):\s*([0-9.]+)\s*\}$/i);
+        if (pauseMatch) {
+          html += `<div class="pause-badge">⏸ Pause: ${escapeHtml(pauseMatch[2])}s</div>`;
+          return;
+        }
+
+        // 2c. $$-Trennzeilen (z. B. "$$$$$$$$$$$$$$$$$$$") schalten einen
+        // Notiz-Block um - alle Zeilen darin (freie Notizen wie "Capo 2"
+        // sowie unbekannte Tags) werden als Notiz statt als Songtext gerendert.
+        if (/^\${2,}$/.test(trimmed)) {
+          inNotesBlock = !inNotesBlock;
+          html += '<hr class="notes-divider">';
+          return;
+        }
+
         // 3. Header-Metadaten für Badges
         const headerMatch = line.match(/^\{(\w+):\s*(.*)\}$/i);
         if (headerMatch) {
@@ -510,6 +546,21 @@ $$$$$$$$$$$$$$$$$$$
           if (tag === 'bpm' || tag === 'tempo') metaBpm = headerMatch[2].trim();
           if (tag === 'key') metaKey = headerMatch[2].trim();
           if (HEADER_TAGS.includes(tag)) return;
+          // Erweiterte/unbekannte Metadaten-Tags (z. B. {scrollspeed: ...})
+          // dezent als Tag-Badge hervorheben statt als rohen Fließtext zu
+          // parsen - {shl:}/{ehl} bleiben ausgenommen (werden inline in
+          // Akkord-/Textzeilen ausgewertet, siehe Schritt 5).
+          if (tag !== 'shl' && tag !== 'ehl') {
+            html += `<div class="meta-tag-line">{${escapeHtml(headerMatch[1])}: ${escapeHtml(headerMatch[2])}}</div>`;
+            return;
+          }
+        }
+
+        // 3b. Innerhalb eines $$-Notiz-Blocks: freier Text (z. B. "Capo 2",
+        // "Original: C") wird als Notiz statt als Songtext/Akkordzeile gerendert.
+        if (inNotesBlock && trimmed.length > 0) {
+          html += `<div class="note-line">${escapeHtml(line)}</div>`;
+          return;
         }
 
         // 4. Reine Akkord-Zeile (z. B. [Bm]  [F#7]  [A])
@@ -675,9 +726,10 @@ $$$$$$$$$$$$$$$$$$$
       const { data, error } = await supabaseClient.from('songs').upsert(payload).select();
       if (error) {
         alert('Fehler beim Speichern: ' + error.message);
-      } else { 
-        await loadAllData(); 
+      } else {
+        await loadAllData();
         if (data && data[0]) selectSong(data[0]);
+        setSaveButtonState(false);
       }
     }
 
