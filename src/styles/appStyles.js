@@ -185,6 +185,9 @@ export const styles = StyleSheet.create({
   },
   fixedBadgeSpacing: { marginLeft: 12 },
   fixedBadgeText: { color: '#FFF', fontSize: 26, fontWeight: 'bold' },
+  // Warnhinweis: Badge zeigt einen Fallback-Wert (BPM) oder fehlt ganz (Key),
+  // weil der zugehörige Tag im Songtext fehlt/ungültig ist.
+  fixedBadgeWarning: { backgroundColor: '#DC2626' },
   cancelBtn: { backgroundColor: '#DDD', paddingVertical: 10, paddingHorizontal: 18, borderRadius: 8 },
   cancelBtnText: { color: '#222', fontWeight: 'bold', fontSize: 16 },
   saveBtn: { backgroundColor: '#77DD77', paddingVertical: 10, paddingHorizontal: 18, borderRadius: 8 },

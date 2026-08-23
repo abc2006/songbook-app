@@ -280,13 +280,11 @@ function SongPage({
           ) : null}
         </View>
         <View style={styles.headerBadgesRow}>
-          {keyDisplay ? (
-            <View style={styles.headerBadge}>
-              <Text style={styles.headerBadgeText}>{keyDisplay}</Text>
-            </View>
-          ) : null}
+          <View style={[styles.headerBadge, !keyDisplay && styles.headerBadgeWarning]}>
+            <Text style={styles.headerBadgeText}>{keyDisplay || 'No Key'}</Text>
+          </View>
           <View style={[styles.headerBadge, styles.headerBadgeSpacing, !hasValidBpm && styles.headerBadgeWarning]}>
-            <Text style={styles.headerBadgeText}>⏱ {bpm}</Text>
+            <Text style={styles.headerBadgeText}>{hasValidBpm ? `⏱ ${bpm}` : `${bpm} BPM`}</Text>
           </View>
           {song.data?.capo ? (
             <View style={[styles.headerBadge, styles.headerBadgeSpacing]}>

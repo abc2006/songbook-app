@@ -10,6 +10,7 @@ const THEME_BACKGROUND = { light: '#F4F4F4', dark: '#121212' };
 export function SongDetailView({
   insetsBottom,
   keyDisplay,
+  hasExplicitBpm,
   renderedLines,
   fontSize,
   transpose,
@@ -56,13 +57,13 @@ export function SongDetailView({
         </ScrollView>
 
         <View style={styles.fixedBadgesWrap} pointerEvents="none">
-          {keyDisplay ? (
-            <View style={styles.fixedBadge}>
-              <Text style={styles.fixedBadgeText}>{keyDisplay}</Text>
-            </View>
-          ) : null}
-          <View style={[styles.fixedBadge, styles.fixedBadgeSpacing]}>
-            <Text style={styles.fixedBadgeText}>⏱ {metronome.bpm}</Text>
+          <View style={[styles.fixedBadge, !keyDisplay && styles.fixedBadgeWarning]}>
+            <Text style={styles.fixedBadgeText}>{keyDisplay || 'No Key'}</Text>
+          </View>
+          <View style={[styles.fixedBadge, styles.fixedBadgeSpacing, !hasExplicitBpm && styles.fixedBadgeWarning]}>
+            <Text style={styles.fixedBadgeText}>
+              {hasExplicitBpm ? `⏱ ${metronome.bpm}` : `${metronome.bpm} BPM`}
+            </Text>
           </View>
         </View>
       </View>

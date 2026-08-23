@@ -163,6 +163,10 @@ export function SongDetailScreen() {
   const preferFlat = resolvePreferFlat(song.data?.key);
   const renderedLines = renderChordProLines(song.lyrics || '', transpose, preferFlat);
   const keyDisplay = transposeKeyDisplay(song.data?.key, transpose, preferFlat);
+  // Ob im Songtext tatsächlich ein {bpm:}-Tag stand (nicht der ggf. schon
+  // fallback-ersetzte metronome.bpm-Wert) - für das rote Warn-Badge im Header.
+  const rawBpm = Number(song.data?.bpm);
+  const hasExplicitBpm = Number.isFinite(rawBpm) && rawBpm > 0;
 
   return editMode ? (
     <EditSongView
@@ -176,6 +180,7 @@ export function SongDetailScreen() {
     <SongDetailView
       insetsBottom={insets.bottom}
       keyDisplay={keyDisplay}
+      hasExplicitBpm={hasExplicitBpm}
       renderedLines={renderedLines}
       fontSize={fontSize}
       transpose={transpose}
