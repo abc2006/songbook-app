@@ -3,10 +3,10 @@ import {
   View,
   Text,
   ScrollView,
+  FlatList,
   TouchableOpacity,
   StyleSheet,
   BackHandler,
-  PanResponder,
   Animated,
   useWindowDimensions,
   StatusBar,
@@ -27,11 +27,6 @@ const STATUS_BAR_BACKGROUND = '#121212';
 
 const TAP_MOVE_THRESHOLD = 12;
 const TAP_TIME_THRESHOLD = 400;
-const DRAG_CAPTURE_THRESHOLD = 24;
-const COMMIT_DISTANCE_RATIO = 0.25;
-const COMMIT_VELOCITY_THRESHOLD = 0.4;
-const RUBBER_BAND_FACTOR = 0.3;
-const SLIDE_DURATION = 220;
 const EXIT_CONFIRM_TIMEOUT = 2000;
 
 // Auto-Scroll-Takt: alle SCROLL_TICK_MS wird um (Basisgeschwindigkeit *
@@ -344,12 +339,12 @@ function SongPage({
 
 /**
  * Auftritt-Modus: kompletter Songtext ohne jegliches Chrome. Tap zum
- * Starten/Stoppen des Autoscrolls, fingergeführtes horizontales Ziehen
- * (Live-Drag mit Vorschau auf Nachbar-Songs, Snap/Spring beim Loslassen)
- * zum Song-Wechsel. Bewusst mit PanResponder + Animated (Kern-React-Native)
- * statt react-native-gesture-handler/Reanimated umgesetzt - letztere
- * brauchten Worklets, die in Expo Go zu Laufzeitfehlern führten (siehe
- * frühere Session).
+ * Starten/Stoppen des Autoscrolls, horizontales Blättern zwischen den Songs
+ * der Setliste über eine native, paginierende FlatList (pagingEnabled) -
+ * das native Scroll-Handling übernimmt Snap-auf-Seite, Geschwindigkeits-
+ * erkennung (Flick vs. Drag) und die Trennung von horizontaler und
+ * vertikaler Geste (Songtext-ScrollView) automatisch, ohne eigenen
+ * PanResponder/Animated-Drag-Code.
  */
 export function ShowModeScreen() {
   const navigation = useNavigation();
@@ -370,12 +365,8 @@ export function ShowModeScreen() {
   const scrollRef = useRef(null);
   const scrollY = useRef(0);
   const touchStartRef = useRef({ x: 0, y: 0, time: 0 });
-  const entriesRef = useRef([]);
-  const indexRef = useRef(startIndex);
   const showExitConfirmRef = useRef(false);
   const exitTimeoutRef = useRef(null);
-  const isAnimatingRef = useRef(false);
-  const dragX = useRef(new Animated.Value(0)).current;
   const countdownBarWidth = useRef(new Animated.Value(0)).current;
   const countdownOpacity = useRef(new Animated.Value(1)).current;
 
@@ -410,12 +401,6 @@ export function ShowModeScreen() {
   // Aktives Fast-Forward-Ziel (scrollY-Wert) oder null, wenn keins läuft.
   const fastForwardTargetRef = useRef(null);
 
-  useEffect(() => {
-    entriesRef.current = entries;
-  }, [entries]);
-  useEffect(() => {
-    indexRef.current = index;
-  }, [index]);
   useEffect(() => {
     showExitConfirmRef.current = showExitConfirm;
   }, [showExitConfirm]);
@@ -618,8 +603,6 @@ export function ShowModeScreen() {
   }, [index]);
 
   const currentSong = entries[index]?.song || null;
-  const prevSong = entries[index - 1]?.song || null;
-  const nextSong = entries[index + 1]?.song || null;
   const backgroundColor = THEME_BACKGROUND[getChordSettings().typography.theme] || THEME_BACKGROUND.light;
 
   useEffect(() => {
@@ -761,79 +744,20 @@ export function ShowModeScreen() {
   }
 
   /**
-   * Schließt einen Song-Wechsel ab: Blatt gleitet die letzten paar Pixel
-   * bis 100% raus, dann wird der Index gewechselt und dragX synchron auf 0
-   * zurückgesetzt - da die neue "aktuelle" Seite (vorher die Nachbar-Seite)
-   * an exakt derselben Bildschirmposition steht, gibt es keinen sichtbaren
-   * Sprung.
+   * FlatList-Paging: `pagingEnabled` lässt das native Scroll-Handling (iOS/
+   * Android) immer exakt auf die nächste/vorherige Seite einrasten - kein
+   * eigener Drag-/Flick-Berechnungscode mehr nötig. `onMomentumScrollEnd`
+   * feuert erst, wenn die Seite final eingerastet ist, und synchronisiert
+   * dann genau einmal den Index (State bleibt immer zu genau einem Song
+   * synchron). Das native Scroll-Handling trennt horizontales Blättern und
+   * vertikales Songtext-Scrollen automatisch und ruckelfrei.
    */
-  function commitSwipe(toNext) {
-    if (isAnimatingRef.current) return;
-    isAnimatingRef.current = true;
-    const target = toNext ? -screenWidth : screenWidth;
-    Animated.timing(dragX, {
-      toValue: target,
-      duration: SLIDE_DURATION,
-      useNativeDriver: true,
-    }).start(() => {
-      setIndex((i) => (toNext ? i + 1 : i - 1));
-      dragX.setValue(0);
-      isAnimatingRef.current = false;
-    });
+  function handleMomentumScrollEnd(e) {
+    const newIndex = Math.round(e.nativeEvent.contentOffset.x / screenWidth);
+    if (newIndex !== index && newIndex >= 0 && newIndex < entries.length) {
+      setIndex(newIndex);
+    }
   }
-
-  function snapBack() {
-    Animated.spring(dragX, {
-      toValue: 0,
-      useNativeDriver: true,
-      bounciness: 6,
-      speed: 16,
-    }).start();
-  }
-
-  const panResponder = useRef(
-    PanResponder.create({
-      // Nur bei eindeutig horizontaler Bewegung übernehmen, damit
-      // vertikales Scrollen der ScrollView nicht gestört wird.
-      onMoveShouldSetPanResponderCapture: (evt, gestureState) => {
-        const { dx, dy } = gestureState;
-        return Math.abs(dx) > DRAG_CAPTURE_THRESHOLD && Math.abs(dx) > Math.abs(dy) * 1.5;
-      },
-      onPanResponderMove: (evt, gestureState) => {
-        if (isAnimatingRef.current) return;
-        let dx = gestureState.dx;
-        const atFirst = indexRef.current === 0;
-        const atLast = indexRef.current >= entriesRef.current.length - 1;
-        // Rubber-Banding an den Rändern der Setliste: gedämpfter Widerstand
-        // statt das Blatt frei rausziehen zu lassen, wenn es keinen
-        // Nachbar-Song in die gewünschte Richtung gibt.
-        if (dx > 0 && atFirst) dx *= RUBBER_BAND_FACTOR;
-        if (dx < 0 && atLast) dx *= RUBBER_BAND_FACTOR;
-        dragX.setValue(dx);
-      },
-      onPanResponderRelease: (evt, gestureState) => {
-        if (isAnimatingRef.current) return;
-        const { dx, vx } = gestureState;
-        const atFirst = indexRef.current === 0;
-        const atLast = indexRef.current >= entriesRef.current.length - 1;
-        const threshold = screenWidth * COMMIT_DISTANCE_RATIO;
-
-        const wantsNext = dx < 0 && (Math.abs(dx) > threshold || vx < -COMMIT_VELOCITY_THRESHOLD);
-        const wantsPrev = dx > 0 && (Math.abs(dx) > threshold || vx > COMMIT_VELOCITY_THRESHOLD);
-
-        if (wantsNext && !atLast) {
-          commitSwipe(true);
-        } else if (wantsPrev && !atFirst) {
-          commitSwipe(false);
-        } else {
-          snapBack();
-        }
-      },
-      onPanResponderTerminate: () => {
-        if (!isAnimatingRef.current) snapBack();
-      },
-    })
-  ).current;
 
   function handleTouchStart(e) {
     const touch = e.nativeEvent.touches[0];
@@ -893,37 +817,44 @@ export function ShowModeScreen() {
     <View style={[styles.container, { backgroundColor }]}>
       {statusBarOverride}
       {statusBarSpacer}
-      <View
-        style={styles.carousel}
-        {...panResponder.panHandlers}
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
-      >
-        <Animated.View style={[styles.page, { left: -screenWidth, width: screenWidth, transform: [{ translateX: dragX }] }]}>
-          <SongPage song={prevSong} active={false} />
-        </Animated.View>
-        <Animated.View style={[styles.page, { left: 0, width: screenWidth, transform: [{ translateX: dragX }] }]}>
-          <SongPage
-            song={currentSong}
-            active
-            scrollRef={scrollRef}
-            onScroll={(e) => { scrollY.current = e.nativeEvent.contentOffset.y; }}
-            onScrollBeginDrag={handleScrollBeginDrag}
-            onPauseMarkersChange={handleActivePauseMarkersChange}
-            onSpeedZonesChange={handleActiveSpeedZonesChange}
-            onContentMetricsChange={handleContentMetricsChange}
-            onLastLineMetricsChange={handleLastLineMetricsChange}
-            onFirstMusicLineMetricsChange={handleFirstMusicLineMetricsChange}
-            onStartDelayComputed={handleStartDelayComputed}
-            countdown={countdown}
-            countdownBarWidth={countdownBarWidth}
-            countdownOpacity={countdownOpacity}
-            onSkipCountdown={clearCountdown}
-          />
-        </Animated.View>
-        <Animated.View style={[styles.page, { left: screenWidth, width: screenWidth, transform: [{ translateX: dragX }] }]}>
-          <SongPage song={nextSong} active={false} />
-        </Animated.View>
+      <View style={styles.carousel} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+        <FlatList
+          data={entries}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          initialScrollIndex={index}
+          getItemLayout={(data, i) => ({ length: screenWidth, offset: screenWidth * i, index: i })}
+          onMomentumScrollEnd={handleMomentumScrollEnd}
+          keyExtractor={(item) => String(item.setlistSongId)}
+          windowSize={3}
+          maxToRenderPerBatch={3}
+          removeClippedSubviews
+          renderItem={({ item, index: itemIndex }) => {
+            const isActive = itemIndex === index;
+            return (
+              <View style={{ width: screenWidth, height: '100%' }}>
+                <SongPage
+                  song={item.song}
+                  active={isActive}
+                  scrollRef={isActive ? scrollRef : undefined}
+                  onScroll={isActive ? (e) => { scrollY.current = e.nativeEvent.contentOffset.y; } : undefined}
+                  onScrollBeginDrag={handleScrollBeginDrag}
+                  onPauseMarkersChange={handleActivePauseMarkersChange}
+                  onSpeedZonesChange={handleActiveSpeedZonesChange}
+                  onContentMetricsChange={handleContentMetricsChange}
+                  onLastLineMetricsChange={handleLastLineMetricsChange}
+                  onFirstMusicLineMetricsChange={handleFirstMusicLineMetricsChange}
+                  onStartDelayComputed={handleStartDelayComputed}
+                  countdown={countdown}
+                  countdownBarWidth={countdownBarWidth}
+                  countdownOpacity={countdownOpacity}
+                  onSkipCountdown={clearCountdown}
+                />
+              </View>
+            );
+          }}
+        />
       </View>
 
       {exitConfirmOverlay}
@@ -988,8 +919,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textAlign: 'center',
   },
-  carousel: { flex: 1, position: 'relative', overflow: 'hidden' },
-  page: { position: 'absolute', top: 0, bottom: 0 },
+  carousel: { flex: 1 },
   exitOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.28)',

@@ -87,7 +87,7 @@ export function SetlistDetailScreen() {
           <View style={styles.row}>
             <TouchableOpacity
               style={styles.rowInfo}
-              onPress={() => navigation.navigate('SongDetail', { songId: item.song.id })}
+              onPress={() => navigation.navigate('SongDetail', { songId: item.song.id, setlistId, startIndex: index })}
             >
               <Text style={styles.rowTitle} numberOfLines={1}>{item.song.title}</Text>
               <Text style={styles.rowArtist} numberOfLines={1}>{item.song.artist || ''}</Text>
