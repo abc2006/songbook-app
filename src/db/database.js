@@ -219,7 +219,7 @@ export async function getAllSongs() {
 }
 
 export async function getSongById(id) {
-  const row = await db.getFirstAsync('SELECT * FROM songs WHERE id = ?', id);
+  const row = await db.getFirstAsync('SELECT * FROM songs WHERE id = ? AND deleted_at IS NULL', id);
   return parseSongRow(row);
 }
 
@@ -283,7 +283,7 @@ export async function getSetlists() {
 }
 
 export async function getSetlistById(id) {
-  return db.getFirstAsync('SELECT * FROM setlists WHERE id = ?', id);
+  return db.getFirstAsync('SELECT * FROM setlists WHERE id = ? AND deleted_at IS NULL', id);
 }
 
 export async function createSetlist(name) {

@@ -1,5 +1,16 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform } from 'react-native';
+import { usePedalDeviceListener, describePedalKeyCode, describePedalDevice } from '../hooks/usePedalCapture';
+import {
+  PEDAL_ACTIONS,
+  loadPedalSettings,
+  getPedalBindings,
+  setPedalBinding,
+  clearPedalBinding,
+  getActivePedalDevice,
+  setActivePedalDevice,
+  clearActivePedalDevice,
+} from '../services/pedalSettings';
 import {
   getChordSettings,
   loadChordSettings,
@@ -17,6 +28,16 @@ import {
   COMMENT_STYLE_OPTIONS,
   TAB_COLOR_OPTIONS,
 } from '../services/chordSettingsService';
+
+// Identifiziert ein Pedal-/Tastatur-Gerät für Deduplizierung/Vergleich in
+// seenDevices - wie pedalSettings.matchesActivePedalDevice primär über
+// vendorId/productId, ersatzweise über deviceName (manche Bluetooth-HID-
+// Geräte melden vendorId/productId nicht, beide dann 0).
+function deviceKey(device) {
+  if (!device) return '';
+  if (device.vendorId || device.productId) return `${device.vendorId}:${device.productId}`;
+  return `name:${device.deviceName}`;
+}
 
 function OptionGroup({ options, selectedValue, onSelect }) {
   return (
@@ -132,6 +153,10 @@ export function SettingsScreen() {
   const [nomenclature, setNomenclature] = useState(getChordSettings().nomenclature);
   const [accidentals, setAccidentals] = useState(getChordSettings().accidentals);
   const [typography, setTypography] = useState(getChordSettings().typography);
+  const [pedalBindings, setPedalBindingsState] = useState(getPedalBindings());
+  const [lastPedalEvent, setLastPedalEvent] = useState(null);
+  const [activeDevice, setActiveDeviceState] = useState(getActivePedalDevice());
+  const [seenDevices, setSeenDevices] = useState([]); // physische Geräte, deren Tasten seit Öffnen der Einstellungen erkannt wurden
 
   useEffect(() => {
     (async () => {
@@ -140,7 +165,48 @@ export function SettingsScreen() {
       setAccidentals(settings.accidentals);
       setTypography(settings.typography);
     })();
+    (async () => {
+      setPedalBindingsState(await loadPedalSettings());
+      setActiveDeviceState(getActivePedalDevice());
+    })();
   }, []);
+
+  // Lauscht, solange die Einstellungen offen sind, auf Tastendrücke eines
+  // gekoppelten Bluetooth-Fußpedals (siehe usePedalCapture, nativ über
+  // MainActivity.dispatchKeyEvent) - das zuletzt empfangene Event (inkl.
+  // Gerätedaten) wird unten angezeigt und kann per Button einer Aktion
+  // zugewiesen werden. Physische Geräte (nicht die Software-Tastatur)
+  // werden zusätzlich in seenDevices gesammelt, damit auch mehrere
+  // gleichzeitig gekoppelte Geräte einzeln als "aktives Pedal" auswählbar
+  // sind. Bewusst usePedalDeviceListener (nicht usePedalKeyListener), damit
+  // auch ein noch nicht als aktives Pedal zugewiesenes Gerät hier sichtbar
+  // bleibt.
+  usePedalDeviceListener((event) => {
+    setLastPedalEvent(event);
+    if (!event.isPhysicalDevice) return;
+    setSeenDevices((prev) => {
+      const key = deviceKey(event);
+      const withoutExisting = prev.filter((d) => deviceKey(d) !== key);
+      return [event, ...withoutExisting].slice(0, 6);
+    });
+  }, true);
+
+  async function handleAssignPedalAction(actionId) {
+    if (lastPedalEvent === null) return;
+    setPedalBindingsState(await setPedalBinding(actionId, lastPedalEvent.keyCode));
+  }
+
+  async function handleClearPedalAction(actionId) {
+    setPedalBindingsState(await clearPedalBinding(actionId));
+  }
+
+  async function handleAssignActiveDevice(device) {
+    setActiveDeviceState(await setActivePedalDevice(device));
+  }
+
+  async function handleClearActiveDevice() {
+    setActiveDeviceState(await clearActivePedalDevice());
+  }
 
   async function handleSelectNomenclature(value) {
     setNomenclature(value);
@@ -301,6 +367,96 @@ export function SettingsScreen() {
         </Row>
       </TypographyCard>
 
+      <Text style={[styles.sectionTitle, { marginTop: 24 }]}>Bluetooth-Fußpedal</Text>
+      <Text style={styles.sectionHint}>
+        Pedal zuerst in den Bluetooth-Einstellungen des Geräts koppeln (es meldet sich dort als Tastatur). Danach
+        hier eine Taste des Pedals drücken - der erkannte Wert erscheint unten und kann einer Funktion zugewiesen
+        werden. Tasten werden direkt vom Betriebssystem abgefangen, bevor sie den Bildschirm verschieben oder die
+        Tastatur öffnen können.{Platform.OS !== 'android' ? ' Nur auf Android verfügbar.' : ''}
+      </Text>
+
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>🦶 Zuletzt empfangener Wert</Text>
+        <Text style={styles.pedalLastKey}>
+          {lastPedalEvent !== null
+            ? describePedalKeyCode(lastPedalEvent.keyCode)
+            : 'Noch keine Eingabe erkannt - Pedal drücken…'}
+        </Text>
+        <Text style={styles.pedalDeviceText}>
+          {lastPedalEvent !== null
+            ? `Erkanntes Gerät: ${describePedalDevice(lastPedalEvent)}${lastPedalEvent.isPhysicalDevice ? '' : ' (Software-Tastatur)'}`
+            : ' '}
+        </Text>
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>🔗 Aktives Pedal</Text>
+        <Text style={styles.sectionHint}>
+          Legt fest, von welchem Gerät Tastendrücke exklusiv als Pedal-Befehle abgefangen werden - praktisch, wenn
+          zusätzlich eine normale Bluetooth-Tastatur gekoppelt ist, die weiterhin normal tippen soll. Ohne Zuweisung
+          wird (wie bisher) jedes physische Gerät als Pedal behandelt.
+        </Text>
+        <Text style={styles.pedalBoundValue}>
+          {activeDevice ? `Zugewiesen: ${describePedalDevice(activeDevice)}` : 'Kein aktives Pedal festgelegt'}
+        </Text>
+
+        {seenDevices.length > 0 ? (
+          <View style={styles.deviceList}>
+            {seenDevices.map((device) => {
+              const isActive = activeDevice && deviceKey(device) === deviceKey(activeDevice);
+              return (
+                <TouchableOpacity
+                  key={deviceKey(device)}
+                  onPress={() => handleAssignActiveDevice(device)}
+                  style={[styles.deviceRow, isActive && styles.deviceRowActive]}
+                >
+                  <Text style={styles.deviceRowText}>{describePedalDevice(device)}</Text>
+                  <Text style={styles.deviceRowStatus}>{isActive ? '✓ Aktiv' : 'Auswählen'}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        ) : (
+          <Text style={styles.sectionHint}>Noch keine Geräte erkannt - eine Taste auf dem gewünschten Gerät drücken.</Text>
+        )}
+
+        {activeDevice ? (
+          <View style={styles.pillRow}>
+            <TouchableOpacity onPress={handleClearActiveDevice} style={styles.pill}>
+              <Text style={styles.pillText}>Zuweisung entfernen</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+      </View>
+
+      {PEDAL_ACTIONS.map((action) => {
+        const boundKeyCode = pedalBindings[action.id];
+        const hasBinding = boundKeyCode !== undefined && boundKeyCode !== null;
+        return (
+          <View key={action.id} style={styles.card}>
+            <Text style={styles.cardTitle}>{action.label}</Text>
+            <Text style={styles.sectionHint}>{action.hint}</Text>
+            <Text style={styles.pedalBoundValue}>
+              {hasBinding ? `Zugewiesen: ${describePedalKeyCode(boundKeyCode)}` : 'Keine Taste zugewiesen'}
+            </Text>
+            <View style={styles.pillRow}>
+              <TouchableOpacity
+                onPress={() => handleAssignPedalAction(action.id)}
+                disabled={lastPedalEvent === null}
+                style={[styles.pill, lastPedalEvent === null && styles.pillDisabled]}
+              >
+                <Text style={styles.pillText}>Zuletzt empfangenen Wert zuweisen</Text>
+              </TouchableOpacity>
+              {hasBinding ? (
+                <TouchableOpacity onPress={() => handleClearPedalAction(action.id)} style={styles.pill}>
+                  <Text style={styles.pillText}>Entfernen</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          </View>
+        );
+      })}
+
       <View style={{ height: 60 }} />
     </ScrollView>
   );
@@ -365,8 +521,28 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   pillSelected: { backgroundColor: '#FFD700' },
+  pillDisabled: { opacity: 0.4 },
   pillText: { color: '#555', fontSize: 13, fontWeight: '600' },
   pillTextSelected: { color: '#222' },
+
+  pedalLastKey: { fontSize: 15, fontWeight: 'bold', color: '#222' },
+  pedalDeviceText: { fontSize: 12, color: '#888', marginTop: 4 },
+  pedalBoundValue: { fontSize: 13, color: '#3478F6', fontWeight: '600', marginTop: 8, marginBottom: 10 },
+
+  deviceList: { marginTop: 4, marginBottom: 10 },
+  deviceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: '#F1F1F1',
+    marginBottom: 6,
+  },
+  deviceRowActive: { backgroundColor: '#FFFBEA', borderWidth: 1, borderColor: '#FFD700' },
+  deviceRowText: { fontSize: 13, color: '#222', fontWeight: '600', flex: 1, marginRight: 8 },
+  deviceRowStatus: { fontSize: 12, color: '#3478F6', fontWeight: '700' },
 
   swatchRow: { flexDirection: 'row', flexWrap: 'wrap' },
   swatchWrap: { alignItems: 'center', marginRight: 16, marginBottom: 8, width: 56 },

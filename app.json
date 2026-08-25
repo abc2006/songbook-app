@@ -2,6 +2,7 @@
   "expo": {
     "name": "songbook-app",
     "slug": "songbook-app",
+    "scheme": "songbook-app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -16,10 +17,19 @@
       "supportsTablet": true
     },
     "android": {
+      "allowBackup": false,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
-      }
+      },
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.INTERNET"
+      ],
+      "package": "com.anonymous.songbookapp"
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -29,7 +39,15 @@
       "expo-sqlite",
       "expo-audio",
       "expo-document-picker",
-      "expo-file-system"
-    ]
+      "expo-file-system",
+      "./plugins/withPedalDeviceModule.js",
+      "./plugins/withKeyEventMainActivity.js"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "d4c950f9-d507-4401-b990-864985a65d1c"
+      }
+    },
+    "owner": "snowfox22s-team"
   }
 }

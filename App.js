@@ -5,12 +5,13 @@ import { NavigationContainer } from '@react-navigation/native';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { initDatabase } from './src/db/database';
 import { loadChordSettings } from './src/services/chordSettingsService';
+import { loadPedalSettings } from './src/services/pedalSettings';
 
 export default function App() {
   const [dbReady, setDbReady] = useState(false);
 
   useEffect(() => {
-    Promise.all([initDatabase(), loadChordSettings()]).then(() => setDbReady(true));
+    Promise.all([initDatabase(), loadChordSettings(), loadPedalSettings()]).then(() => setDbReady(true));
   }, []);
 
   if (!dbReady) {

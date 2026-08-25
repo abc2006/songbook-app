@@ -2,6 +2,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { View, Text, TextInput, FlatList, TouchableOpacity, StyleSheet, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { getAllSongs, deleteSong } from '../db/database';
+import { triggerAutoSync } from '../services/autoSync';
 import { SongBadges } from '../components/SongBadges';
 
 export function SongsListScreen({ navigation }) {
@@ -46,6 +47,7 @@ export function SongsListScreen({ navigation }) {
                 style: 'destructive',
                 onPress: async () => {
                   await deleteSong(song.id);
+                  triggerAutoSync();
                   loadSongs();
                 },
               },

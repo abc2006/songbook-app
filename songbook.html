@@ -102,6 +102,12 @@
       -moz-tab-size: 6;
     }
     textarea:focus { outline: none; border-color: #3b82f6; }
+
+    #audio-panel { margin-top: 10px; padding: 10px 12px; background: #1a1a1a; border: 1px solid #2d2d2d; border-radius: 6px; }
+    #audio-status { font-size: 12.5px; color: #aaa; margin-bottom: 8px; }
+    #audio-status.linked { color: #4ade80; }
+    #audio-status.uploading { color: #60a5fa; }
+    #audio-status.error { color: #ef4444; }
     
     .chord-line { color: #60a5fa; font-weight: bold; min-height: 1.2em; }
     .lyric-line { color: #f3f4f6; margin-bottom: 6px; }
@@ -169,6 +175,14 @@
     <div id="content-view">
       <div id="editor-pane">
         <textarea id="song-editor" placeholder="{title: Mein Song}&#10;{artist: Band}&#10;{bpm: 120}&#10;{key: Am}&#10;&#10;[Am]Songtext..." oninput="updatePreview(); markDirty();"></textarea>
+        <div id="audio-panel">
+          <div id="audio-status">Keine Audiodatei verknüpft</div>
+          <div class="btn-row">
+            <input type="file" id="audio-file-input" accept="audio/*" style="display:none;" onchange="handleAudioFileSelected(event)">
+            <button class="btn-secondary" onclick="document.getElementById('audio-file-input').click()">🎵 MP3 hochladen</button>
+            <button class="btn-secondary" id="audio-remove-btn" style="display:none;" onclick="removeAudioFile()">✖ Verknüpfung entfernen</button>
+          </div>
+        </div>
       </div>
       <div id="preview-container">
         <div id="preview-meta-container">
@@ -435,6 +449,7 @@
       updatePreview();
       renderSongList(songs);
       setSaveButtonState(false);
+      renderAudioFileStatus();
     }
 
     function newSong() {
@@ -460,6 +475,98 @@ $$$$$$$$$$$$$$$$$$$
       updatePreview();
       renderSongList(songs);
       setSaveButtonState(false);
+      renderAudioFileStatus();
+    }
+
+    /* --- AUDIO (MP3-Upload in privaten Supabase-Storage-Bucket "songbook-app") --- */
+
+    const AUDIO_BUCKET = 'songbook-app';
+
+    function setAudioStatus(text, kind) {
+      const el = document.getElementById('audio-status');
+      el.innerText = text;
+      el.className = kind || '';
+    }
+
+    function renderAudioFileStatus() {
+      const removeBtn = document.getElementById('audio-remove-btn');
+      const audioFile = currentSong && currentSong.data ? currentSong.data.audioFile : null;
+      if (audioFile) {
+        setAudioStatus(`🎵 Verknüpft: ${audioFile}`, 'linked');
+        removeBtn.style.display = 'inline-block';
+      } else {
+        setAudioStatus('Keine Audiodatei verknüpft', '');
+        removeBtn.style.display = 'none';
+      }
+    }
+
+    function handleAudioFileSelected(event) {
+      const file = event.target.files && event.target.files[0];
+      event.target.value = ''; // erlaubt erneute Auswahl derselben Datei später
+      if (!file) return;
+      uploadAudioFile(file);
+    }
+
+    /**
+     * Lädt die gewählte Datei in den privaten Bucket "songbook-app" hoch. Der
+     * Storage-Dateiname ist immer "<songId>.mp3" (enthält zwingend die
+     * Song-ID zur eindeutigen Zuordnung, überschreibt bei erneutem Upload
+     * automatisch die alte Datei desselben Songs). Setzt anschließend
+     * data.audioFile in der Datenbank. Ein neu angelegter, noch nicht
+     * gespeicherter Song hat noch keine ID - Upload wird dann blockiert.
+     */
+    async function uploadAudioFile(file) {
+      if (!supabaseClient) return alert('Bitte erst mit Supabase verbinden.');
+      if (!currentSong || !currentSong.id) {
+        return alert('Bitte den Song zuerst speichern - erst dann existiert eine ID für die Dateibenennung.');
+      }
+
+      const storageFileName = `${currentSong.id}.mp3`;
+      setAudioStatus(`⏳ Lade "${file.name}" hoch...`, 'uploading');
+
+      const { error: uploadError } = await supabaseClient.storage
+        .from(AUDIO_BUCKET)
+        .upload(storageFileName, file, { upsert: true, contentType: file.type || 'audio/mpeg' });
+
+      if (uploadError) {
+        setAudioStatus(`✖ Upload fehlgeschlagen: ${uploadError.message}`, 'error');
+        return;
+      }
+
+      const newData = { ...(currentSong.data || {}), audioFile: storageFileName };
+      const { error: dbError } = await supabaseClient
+        .from('songs')
+        .update({ data: newData, updated_at: new Date().toISOString() })
+        .eq('id', currentSong.id);
+
+      if (dbError) {
+        setAudioStatus(`✖ Hochgeladen, aber Speichern fehlgeschlagen: ${dbError.message}`, 'error');
+        return;
+      }
+
+      currentSong.data = newData;
+      setAudioStatus(`✔ Hochgeladen und verknüpft: ${storageFileName}`, 'linked');
+      renderAudioFileStatus();
+      await loadAllData();
+    }
+
+    async function removeAudioFile() {
+      if (!currentSong || !currentSong.data || !currentSong.data.audioFile) return;
+      if (!confirm('Verknüpfung zur Audiodatei wirklich entfernen? (Die Datei selbst bleibt im Storage-Bucket erhalten.)')) return;
+
+      const newData = { ...currentSong.data };
+      delete newData.audioFile;
+
+      const { error } = await supabaseClient
+        .from('songs')
+        .update({ data: newData, updated_at: new Date().toISOString() })
+        .eq('id', currentSong.id);
+
+      if (error) return alert('Fehler beim Entfernen: ' + error.message);
+
+      currentSong.data = newData;
+      renderAudioFileStatus();
+      await loadAllData();
     }
 
     function parseChordPro(text) {

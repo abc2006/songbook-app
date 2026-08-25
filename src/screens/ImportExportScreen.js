@@ -5,6 +5,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { getAllSongs, createSong } from '../db/database';
+import { triggerAutoSync } from '../services/autoSync';
 import { buildSongText, parseSongText } from '../utils/chordParser';
 
 function sanitizeFileName(name) {
@@ -121,6 +122,7 @@ export function ImportExportScreen() {
       }
       await loadSongs();
       if (importedCount > 0) {
+        triggerAutoSync();
         Alert.alert('Import abgeschlossen', `${importedCount} Song(s) importiert.`);
       }
     } catch (e) {

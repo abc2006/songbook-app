@@ -5,6 +5,14 @@ import { styles } from '../styles/appStyles';
 export function EditSongView({ insetsBottom, editText, onTextChange, onCancel, onSave }) {
   return (
     <>
+      <View style={styles.controlBarEditTop}>
+        <TouchableOpacity onPress={onCancel} style={styles.cancelBtn}>
+          <Text style={styles.cancelBtnText}>Abbrechen</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={onSave} style={styles.saveBtn}>
+          <Text style={styles.saveBtnText}>Speichern</Text>
+        </TouchableOpacity>
+      </View>
       <ScrollView style={styles.lyricsContainer} keyboardShouldPersistTaps="handled">
         <Text style={styles.label}>
           Song-Text mit Direktiven & Akkorden
@@ -21,16 +29,8 @@ export function EditSongView({ insetsBottom, editText, onTextChange, onCancel, o
           multiline
           textAlignVertical="top"
         />
-        <View style={{ height: 100 }} />
+        <View style={{ height: insetsBottom + 40 }} />
       </ScrollView>
-      <View style={[styles.controlBarEdit, { paddingBottom: insetsBottom }]}>
-        <TouchableOpacity onPress={onCancel} style={styles.cancelBtn}>
-          <Text style={styles.cancelBtnText}>Abbrechen</Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={onSave} style={styles.saveBtn}>
-          <Text style={styles.saveBtnText}>Speichern</Text>
-        </TouchableOpacity>
-      </View>
     </>
   );
 }

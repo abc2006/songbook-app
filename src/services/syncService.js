@@ -158,6 +158,14 @@ async function syncEntityTable({ supabase, table, entityLabel, getLocalRows, get
     const name = remote.title || remote.name || '?';
 
     if (!local) {
+      // Bereits in der Cloud als gelöscht markierte Datensätze werden auf
+      // einem Gerät, das sie noch gar nicht kennt (z.B. Neuinstallation),
+      // erst gar nicht als (unsichtbarer) Tombstone angelegt - es gibt
+      // nichts, das dort "gelöscht werden" müsste. Existiert der Datensatz
+      // lokal hingegen schon (siehe else-Zweig unten), wird eine Löschung
+      // weiterhin ganz normal übernommen, damit andere Geräte, die ihn noch
+      // besitzen, ebenfalls davon erfahren.
+      if (remote.deleted_at) continue;
       // eslint-disable-next-line no-await-in-loop
       await applyRemoteLocally(remote);
       log.push(line(`-- ${cap(entityLabel)} does not exist locally. Adding local ${entityLabel}: ${name}`, 'local'));

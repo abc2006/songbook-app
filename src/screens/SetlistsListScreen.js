@@ -2,6 +2,7 @@ import React, { useCallback, useState } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, Modal, TextInput, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { getSetlists, createSetlist, deleteSetlist } from '../db/database';
+import { triggerAutoSync } from '../services/autoSync';
 import { ActionSheetModal } from '../components/ActionSheetModal';
 
 export function SetlistsListScreen({ navigation }) {
@@ -30,6 +31,7 @@ export function SetlistsListScreen({ navigation }) {
     const name = newName.trim();
     if (!name) return;
     await createSetlist(name);
+    triggerAutoSync();
     setCreateModalVisible(false);
     setNewName('');
     loadSetlists();
@@ -43,6 +45,7 @@ export function SetlistsListScreen({ navigation }) {
         style: 'destructive',
         onPress: async () => {
           await deleteSetlist(setlist.id);
+          triggerAutoSync();
           loadSetlists();
         },
       },

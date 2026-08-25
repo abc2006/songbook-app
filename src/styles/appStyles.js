@@ -47,10 +47,18 @@ export const styles = StyleSheet.create({
     borderTopColor: '#E0E0E0',
     // paddingBottom für gestenleiste wird dynamisch hinzugefügt
   },
+  controlBarEditTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 14,
+    backgroundColor: '#FAFAFA',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
   // --- Metronom Styles ---
   metronomeBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: 'column',
     paddingTop: 8,
     paddingBottom: 8,
     paddingHorizontal: 18,
@@ -58,11 +66,26 @@ export const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#E6E6E6',
   },
+  // Eigene Zeile für Start/Pause + Mute, getrennt von BPM-Reglern/Blink-Kreis.
+  metroTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    marginBottom: 10,
+  },
+  metroBottomRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    rowGap: 10,
+  },
   metroBtn: {
     backgroundColor: '#E0E0E0',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 8,
+    paddingVertical: 16,
+    paddingHorizontal: 26,
+    borderRadius: 12,
     marginRight: 18,
   },
   metroPlayActive: {
@@ -71,41 +94,45 @@ export const styles = StyleSheet.create({
   metroBtnText: {
     color: '#222',
     fontWeight: 'bold',
-    fontSize: 15,
+    fontSize: 18,
   },
   bpmControls: {
     flexDirection: 'row',
     alignItems: 'center',
-    flex: 1,
     justifyContent: 'center',
+    flexWrap: 'wrap',
+    rowGap: 10,
   },
+  // Gleiche Größe wie die Zoom-Buttons im Menü (56x56, rund).
   bpmBtn: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     backgroundColor: '#F1F1F1',
-    borderRadius: 8,
-    paddingHorizontal: 9,
-    paddingVertical: 6,
-    marginHorizontal: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: 4,
   },
   bpmBtnText: {
     color: '#333',
-    fontSize: 15,
+    fontSize: 20,
     fontWeight: 'bold',
   },
   bpmText: {
     color: '#222',
     fontWeight: 'bold',
-    fontSize: 16,
-    marginHorizontal: 10,
-    minWidth: 62,
+    fontSize: 18,
+    marginHorizontal: 12,
+    minWidth: 78,
     textAlign: 'center'
   },
   // -- Mute/Unmute Metronom Button --
   metroMuteBtn: {
     backgroundColor: '#EFEFEF',
-    borderRadius: 8,
-    marginLeft: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    marginLeft: 12,
     borderWidth: 1,
     borderColor: '#DDD',
     justifyContent: 'center',
@@ -116,35 +143,9 @@ export const styles = StyleSheet.create({
     borderColor: '#C29797'
   },
   metroMuteIcon: {
-    fontSize: 22,
+    fontSize: 28,
     marginHorizontal: 0,
     color: '#7C6D6D'
-  },
-  metroCircleWrap: {
-    width: 38,
-    alignItems: 'center',
-    marginLeft: 10,
-  },
-  metroCircle: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: '#EEE',
-    marginVertical: 3,
-    borderWidth: 1.5,
-    borderColor: '#D2B20E',
-    transform: [{ scale: 1 }],
-    transitionProperty: 'backgroundColor',
-  },
-  metroCircleActive: {
-    backgroundColor: '#FFD700',
-    transform: [{ scale: 1.4 }],
-    // shadow kann auf Wunsch noch "pop" hinzufügen:
-    shadowColor: '#FFD700',
-    shadowRadius: 12,
-    shadowOpacity: 0.6,
-    shadowOffset: { width: 0, height: 0 },
-    elevation: 4,
   },
   playBtn: { backgroundColor: '#77DD77', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8 },
   playBtnActive: { backgroundColor: '#FF7B7B' },

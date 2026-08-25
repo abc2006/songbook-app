@@ -8,6 +8,7 @@ import {
   removeSongFromSetlist,
   moveSetlistSong,
 } from '../db/database';
+import { triggerAutoSync } from '../services/autoSync';
 import { AddSongsModal } from '../components/AddSongsModal';
 import { SongBadges } from '../components/SongBadges';
 
@@ -65,16 +66,19 @@ export function SetlistDetailScreen() {
 
   async function handleAddSong(song) {
     await addSongToSetlist(setlistId, song.id);
+    triggerAutoSync();
     await loadEntries();
   }
 
   async function handleRemove(entry) {
     await removeSongFromSetlist(entry.setlistSongId);
+    triggerAutoSync();
     loadEntries();
   }
 
   async function handleMove(entry, direction) {
     await moveSetlistSong(setlistId, entry.setlistSongId, direction);
+    triggerAutoSync();
     loadEntries();
   }
 

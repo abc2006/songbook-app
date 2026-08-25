@@ -10,12 +10,14 @@ import {
   useWindowDimensions,
   StatusBar,
 } from 'react-native';
-import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused, useNavigation, useRoute } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getSetlistSongs } from '../db/database';
 import { renderChordProLines, transposeKeyDisplay, resolvePreferFlat } from '../utils/chordParser';
 import { ChordProLines } from '../components/ChordProLines';
 import { getChordSettings } from '../services/chordSettingsService';
+import { usePedalAction } from '../hooks/usePedalCapture';
+import { animateScrollTo, QUARTER_PAGE_SCROLL_DURATION_MS, QUARTER_PAGE_FRACTION } from '../utils/smoothScroll';
 
 const THEME_BACKGROUND = { light: '#F4F4F4', dark: '#121212' };
 // Statusleisten-Bereich bleibt im Show-Modus IMMER auf diesem dunklen
@@ -124,6 +126,8 @@ function SongPage({ song, active, scrollRef, onScroll, onContentMetricsChange })
         onLayout={active ? handleScrollViewLayout : undefined}
         onContentSizeChange={active ? handleContentSizeChange : undefined}
         scrollEventThrottle={16}
+        focusable={false}
+        accessible={false}
       >
         <ChordProLines lines={renderedLines} fontSize={fontSize} />
         <View style={{ height: 300 }} />
@@ -148,7 +152,14 @@ export function ShowModeScreen() {
   const route = useRoute();
   const { setlistId, startIndex = 0 } = route.params || {};
   const insets = useSafeAreaInsets();
-  const { width: screenWidth } = useWindowDimensions();
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  // Wird false, sobald dieser Screen den Fokus verliert (z.B. Wechsel
+  // zurück in die Setliste) - der vorherige Screen bleibt im Navigations-
+  // Stack technisch gemountet, seine usePedalAction-Hooks liefen sonst im
+  // Hintergrund weiter mit. Zusammen mit isFocused unten in
+  // pedalActionsEnabled sorgt das dafür, dass wirklich nur der gerade
+  // sichtbare Screen auf Pedal-Tastendrücke reagiert (siehe usePedalCapture.js).
+  const isFocused = useIsFocused();
 
   const [entries, setEntries] = useState([]);
   const [index, setIndex] = useState(startIndex);
@@ -273,6 +284,33 @@ export function ShowModeScreen() {
     });
   }
 
+  // Sanftes Viertelseiten-Scrollen (Pedal-Aktion): addiert die Distanz per
+  // RAF-Animation (siehe smoothScroll.js) auf die aktuelle Position auf,
+  // ohne einen laufenden Autoscroll (siehe Intervall oben) zu unterbrechen.
+  // containerHeight kommt aus der für die aktive Seite bereits gemessenen
+  // Viewport-Höhe (contentMetricsRef, siehe SongPage/handleContentMetricsChange)
+  // - fällt auf die Fensterhöhe zurück, solange noch keine Messung vorliegt.
+  function scrollByQuarterPage(direction) {
+    const { contentHeight, viewportHeight } = contentMetricsRef.current;
+    const containerHeight = viewportHeight > 0 ? viewportHeight : screenHeight;
+    const maxScrollY = contentHeight > 0 ? Math.max(0, contentHeight - containerHeight) : Infinity;
+    const fromY = scrollY.current;
+    const toY = Math.min(maxScrollY, Math.max(0, fromY + containerHeight * QUARTER_PAGE_FRACTION * direction));
+    animateScrollTo(scrollRef, fromY, toY, QUARTER_PAGE_SCROLL_DURATION_MS, (y) => {
+      scrollY.current = y;
+    });
+  }
+
+  // Bluetooth-Fußpedal: löst dieselbe Start/Stopp-Funktion aus wie ein Tap
+  // auf den Songtext (siehe SettingsScreen für die Zuordnung), sowie die
+  // beiden Viertelseiten-Scroll-Aktionen. Pausiert während der Verlassen-
+  // Sicherheitsabfrage, damit ein Pedaldruck dabei nicht versehentlich noch
+  // etwas auslöst.
+  const pedalActionsEnabled = !!currentSong && !showExitConfirm && isFocused;
+  usePedalAction('toggleScroll', toggleScrolling, pedalActionsEnabled);
+  usePedalAction('scrollQuarterPageDown', () => scrollByQuarterPage(1), pedalActionsEnabled);
+  usePedalAction('scrollQuarterPageUp', () => scrollByQuarterPage(-1), pedalActionsEnabled);
+
   /**
    * FlatList-Paging: `pagingEnabled` lässt das native Scroll-Handling (iOS/
    * Android) immer exakt auf die nächste/vorherige Seite einrasten - kein
@@ -360,6 +398,8 @@ export function ShowModeScreen() {
           windowSize={3}
           maxToRenderPerBatch={3}
           removeClippedSubviews
+          focusable={false}
+          accessible={false}
           renderItem={({ item, index: itemIndex }) => {
             const isActive = itemIndex === index;
             return (

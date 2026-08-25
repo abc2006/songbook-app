@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { getSupabaseConfig, configureSupabase } from '../services/supabase';
 import { syncNow, getLastSyncedAt } from '../services/syncService';
+import { getAutoSyncStatus, subscribeAutoSyncStatus } from '../services/autoSync';
 
 function formatTimestamp(iso) {
   if (!iso) return 'noch nie';
@@ -25,6 +26,15 @@ function formatTimestamp(iso) {
 
 const LOG_LINE_COLOR = { local: '#4CAF50', cloud: '#42A5F5', neutral: '#BBBBBB' };
 
+// Rein informatives Icon+Label für den stillen Hintergrund-Sync - niemals
+// ein Popup/Toast, nur ein dezenter Hinweis im Verwaltungsmodus.
+const AUTO_SYNC_STATUS_LABEL = {
+  idle: '',
+  syncing: '🔄 Synchronisiert im Hintergrund…',
+  synced: '✓ Automatisch synchronisiert',
+  error: '⚠ Nicht synchronisiert (wird beim nächsten Mal erneut versucht)',
+};
+
 export function SyncScreen() {
   const [url, setUrl] = useState('');
   const [anonKey, setAnonKey] = useState('');
@@ -33,6 +43,7 @@ export function SyncScreen() {
   const [syncError, setSyncError] = useState('');
   const [syncLog, setSyncLog] = useState([]);
   const [lastSyncedAt, setLastSyncedAtState] = useState(null);
+  const [autoSyncStatus, setAutoSyncStatus] = useState(getAutoSyncStatus());
 
   useEffect(() => {
     (async () => {
@@ -41,6 +52,12 @@ export function SyncScreen() {
       setAnonKey(config.anonKey);
       setLastSyncedAtState(await getLastSyncedAt());
     })();
+  }, []);
+
+  // Dezentes Status-Icon für den Auto-Sync im Hintergrund (Verwaltungsmodus)
+  // - beeinflusst den Auto-Sync selbst nicht, informiert nur passiv.
+  useEffect(() => {
+    return subscribeAutoSyncStatus(setAutoSyncStatus);
   }, []);
 
   async function handleSaveConfig() {
@@ -106,6 +123,9 @@ export function SyncScreen() {
         <View style={styles.divider} />
 
         <Text style={styles.lastSyncText}>Zuletzt synchronisiert: {formatTimestamp(lastSyncedAt)}</Text>
+        <View style={styles.autoSyncStatusRow}>
+          <Text style={styles.autoSyncStatusText}>{AUTO_SYNC_STATUS_LABEL[autoSyncStatus.status]}</Text>
+        </View>
 
         <TouchableOpacity
           onPress={handleSyncNow}
@@ -162,7 +182,9 @@ const styles = StyleSheet.create({
   saveBtnText: { color: '#222', fontWeight: 'bold' },
   savedText: { color: '#3A8', fontSize: 13, marginTop: 8, textAlign: 'center' },
   divider: { height: 1, backgroundColor: '#E0E0E0', marginVertical: 20 },
-  lastSyncText: { color: '#888', fontSize: 13, marginBottom: 12, textAlign: 'center' },
+  lastSyncText: { color: '#888', fontSize: 13, marginBottom: 4, textAlign: 'center' },
+  autoSyncStatusRow: { alignItems: 'center', marginBottom: 12 },
+  autoSyncStatusText: { color: '#999', fontSize: 12, textAlign: 'center' },
   syncBtn: {
     backgroundColor: '#FFDF91',
     paddingVertical: 14,
